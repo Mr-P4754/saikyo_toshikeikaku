@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>最強都市計画 3D - Saikyo Toshi Keikaku</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D Canvas Container -->
+      <div id="canvas-container"></div>
+
+      <!-- Header HUD -->
+      <header id="hud-header">
+        <div class="header-left">
+          <div class="game-logo">
+            <span class="logo-icon">🚅</span>
+            <div class="logo-text">
+              <span class="main-title">最強都市計画 <span class="version-tag">3D</span></span>
+              <span class="sub-title">Modern City & Railway Simulation</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-center">
+          <div class="stat-card date-card">
+            <span class="stat-icon">📅</span>
+            <div class="stat-info">
+              <span class="stat-label">日付</span>
+              <span id="date-display" class="stat-value">01年 04月 01日</span>
+            </div>
+          </div>
+          <!-- ⑥ 時刻表示 -->
+          <div class="stat-card clock-card">
+            <span class="stat-icon">🕒</span>
+            <div class="stat-info">
+              <span class="stat-label">時刻</span>
+              <span id="clock-display" class="stat-value">00:00</span>
+            </div>
+          </div>
+          <div class="stat-card money-card">
+            <span class="stat-icon">💰</span>
+            <div class="stat-info">
+              <span class="stat-label">資金</span>
+              <span id="funds-display" class="stat-value">¥100,000,000</span>
+            </div>
+          </div>
+          <div class="stat-card pop-card">
+            <span class="stat-icon">👥</span>
+            <div class="stat-info">
+              <span class="stat-label">都市人口</span>
+              <span id="population-display" class="stat-value">0人</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <!-- Game Speed Controls -->
+          <div class="speed-controls">
+            <button id="btn-speed-pause" class="icon-btn" title="一時停止">⏸</button>
+            <button id="btn-speed-1" class="icon-btn active" title="通常速度 (1秒=ゲーム内10分)">▶</button>
+            <button id="btn-speed-2" class="icon-btn" title="高速 (1秒=ゲーム内1時間)">▶▶</button>
+            <button id="btn-speed-3" class="icon-btn" title="超高速 (1秒=ゲーム内6時間)">⏩</button>
+          </div>
+
+          <!-- Sound, Guide & Settings -->
+          <button id="btn-audio-toggle" class="icon-btn" title="サウンド切替">🔊</button>
+          <button id="btn-guide-toggle" class="action-btn" title="操作ガイド">❓ ガイド</button>
+          <button id="btn-report" class="action-btn" title="財務・都市レポート">📊 財務報告</button>
+        </div>
+      </header>
+
+      <!-- View & Camera Controls (Top Right) -->
+      <div id="view-controls">
+        <button id="btn-cam-view" class="view-btn" title="カメラ視点切替">
+          <span class="btn-icon">🎥</span>
+          <span id="cam-view-text">自由視点</span>
+        </button>
+        <button id="btn-time-toggle" class="view-btn" title="昼夜切替">
+          <span id="time-icon" class="btn-icon">☀️</span>
+          <span id="time-text">昼間</span>
+        </button>
+        <button id="btn-grid-toggle" class="view-btn active" title="グリッド表示切替">
+          <span class="btn-icon">📐</span>
+          <span>グリッド</span>
+        </button>
+      </div>
+
+      <!-- Cab / Driver View Overlay (Hidden by default) -->
+      <div id="cab-view-overlay" class="hidden">
+        <div class="cab-hud">
+          <div class="cab-title">🚅 前面展望モード (運転士視点)</div>
+          <div class="cab-train-name" id="cab-train-name">列車 1号</div>
+          <div class="cab-speed-meter">
+            <span class="cab-speed-val" id="cab-speed-val">65</span>
+            <span class="cab-speed-unit">km/h</span>
+          </div>
+          <button id="btn-exit-cab" class="exit-cab-btn">✕ 展望を終了して全体視点へ</button>
+        </div>
+      </div>
+
+      <!-- Quick Guide Banner (Positioned safely above toolbar, dismissible) -->
+      <div id="quick-guide">
+        <span class="guide-text">💡 <b>操作方法</b>: ドラッグでカメラ回転 / 2本指ドラッグ・右ドラッグ・WASDで移動 | ホイール・ピンチでズーム | 右クリック/🔄回転ボタンで設置向きを回転 | 下部ツールで線路・駅・建物を建設！</span>
+        <button id="btn-close-guide" class="close-guide-btn">✕</button>
+      </div>
+
+      <!-- ⑧ 設置向き回転ヒント / ⑦ 設置決定・キャンセル / ⑤ タッチ操作用の回転ボタン -->
+      <div id="rotation-hint" class="rotation-hint hidden">
+        <span id="rotation-value">向き: -</span>
+        <button id="btn-rotate-placement" class="placement-btn rotate">🔄 回転</button>
+        <button id="btn-confirm-placement" class="placement-btn confirm hidden">🔨 設置を決定</button>
+        <button id="btn-cancel-placement" class="placement-btn cancel hidden">✕ キャンセル</button>
+      </div>
+
+      <!-- ⑤ カテゴリーサブメニュー（多層モーダル） -->
+      <div id="tool-submenu" class="tool-submenu hidden">
+        <div class="tool-submenu-header">
+          <span id="submenu-title">カテゴリー</span>
+          <button id="btn-close-submenu" class="close-btn">✕</button>
+        </div>
+        <div class="tool-submenu-grid" id="submenu-grid"></div>
+      </div>
+
+      <!-- Main Construction Toolbar (Bottom Center) -->
+      <nav id="build-toolbar">
+        <div class="toolbar-wrapper">
+          <button class="tool-btn active" data-tool="select">
+            <span class="tool-icon">👆</span>
+            <span class="tool-name">選択/情報</span>
+          </button>
+          <div class="tool-divider"></div>
+
+          <!-- ⑤ ② カテゴリー化: 線路 / 駅 / 街づくり / 列車（各カテゴリー内に専用の撤去ボタンを設置） -->
+          <button class="category-btn" data-category="track">
+            <span class="tool-icon">🛤️</span>
+            <span class="tool-name">線路</span>
+          </button>
+          <button class="category-btn" data-category="station">
+            <span class="tool-icon">🚉</span>
+            <span class="tool-name">駅</span>
+          </button>
+          <button class="category-btn" data-category="city">
+            <span class="tool-icon">🏙️</span>
+            <span class="tool-name">街づくり</span>
+          </button>
+          <button class="category-btn" data-category="train">
+            <span class="tool-icon">🚆</span>
+            <span class="tool-name">列車</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Tile / Object Inspector Panel (Bottom Left) -->
+      <aside id="inspector-panel" class="hidden">
+        <div class="panel-header">
+          <span id="inspect-title">タイル情報</span>
+          <button id="btn-close-inspect" class="close-btn">✕</button>
+        </div>
+        <div class="panel-body">
+          <div class="inspect-row">
+            <span class="inspect-label">座標:</span>
+            <span id="inspect-coords" class="inspect-value">(0, 0)</span>
+          </div>
+          <div class="inspect-row">
+            <span class="inspect-label">種別:</span>
+            <span id="inspect-type" class="inspect-value">更地</span>
+          </div>
+          <div class="inspect-row" id="inspect-extra-row">
+            <span class="inspect-label" id="inspect-extra-label">詳細:</span>
+            <span id="inspect-extra-val" class="inspect-value">-</span>
+          </div>
+          <div class="inspect-actions" id="inspect-actions">
+            <!-- Dynamic action buttons (e.g. ② ポイント切り替えボタン) -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- ⑤ & ⑦ 車両購入・編成選択モーダル -->
+      <div id="vehicle-modal" class="modal-overlay hidden">
+        <div class="modal-card vehicle-card">
+          <div class="modal-header">
+            <h3>🚆 車両購入 & 編成選択</h3>
+            <button id="btn-close-vehicle" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-sub">運行させたい車両形式と編成両数を選択してください。</p>
+
+            <!-- 車両カタロググリッド -->
+            <div class="vehicle-grid" id="vehicle-grid">
+              <!-- Dynamically populated -->
+            </div>
+
+            <!-- 編成両数セレクター -->
+            <div class="cars-selector-box">
+              <span class="selector-title">編成両数:</span>
+              <div class="cars-buttons">
+                <button class="cars-btn" data-cars="1">1両編成 (単行)</button>
+                <button class="cars-btn" data-cars="2">2両編成</button>
+                <button class="cars-btn active" data-cars="3">3両編成 (標準)</button>
+                <button class="cars-btn" data-cars="4">4両編成 (大容量)</button>
+              </div>
+            </div>
+
+            <!-- 合計金額 & 購入ボタン -->
+            <div class="purchase-summary">
+              <div class="summary-row">
+                <span>合計購入費用:</span>
+                <span id="veh-total-price" class="price-highlight">¥105,000,000</span>
+              </div>
+              <button id="btn-confirm-buy-train" class="confirm-buy-btn">この列車を購入して線路に配置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Financial Report Modal -->
+      <div id="report-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>📊 財務状況・決算報告</h3>
+            <button id="btn-close-report" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="report-section">
+              <h4>今期収支</h4>
+              <div class="report-row"><span>運賃収入:</span><span id="rep-fare-income" class="positive">¥0</span></div>
+              <div class="report-row"><span>不動産・地価価値:</span><span id="rep-land-value">¥0</span></div>
+              <div class="report-row"><span>建設・拡張費用:</span><span id="rep-construction-cost" class="negative">¥0</span></div>
+              <div class="report-row"><span>運行・維持管理費:</span><span id="rep-maintenance-cost" class="negative">¥0</span></div>
+              <div class="report-divider"></div>
+              <div class="report-row total"><span>純利益:</span><span id="rep-net-profit">¥0</span></div>
+            </div>
+            <div class="report-section">
+              <h4>都市指標</h4>
+              <div class="report-row"><span>総人口:</span><span id="rep-total-pop">0人</span></div>
+              <div class="report-row"><span>鉄道総延長:</span><span id="rep-track-length">0 km</span></div>
+              <div class="report-row"><span>運行列車数:</span><span id="rep-train-count">0 編成</span></div>
+              <div class="report-row"><span>設置駅数:</span><span id="rep-station-count">0 駅</span></div>
+            </div>
+            <div class="save-load-section">
+              <h4>データ管理</h4>
+              <div class="save-load-buttons">
+                <button id="btn-save-game" class="action-btn">💾 ゲームを保存 (自動保存有効)</button>
+                <button id="btn-reset-city" class="danger-btn">🗑️ 都市を初期化 (更地から)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Application Script Entry -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
