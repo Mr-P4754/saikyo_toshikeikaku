@@ -27,8 +27,16 @@ export class Economy {
   public periodConstructionCost: number = 0;
   public periodMaintenanceCost: number = 0;
 
+  // ② 開発テスト用: 資金無限モード
+  public isInfiniteFunds: boolean = false;
+
   constructor() {
     this.loadFromStorage();
+  }
+
+  public toggleInfiniteFunds(): boolean {
+    this.isInfiniteFunds = !this.isInfiniteFunds;
+    return this.isInfiniteFunds;
   }
 
   public addFunds(amount: number) {
@@ -39,8 +47,18 @@ export class Economy {
   }
 
   public spendFunds(amount: number, isConstruction: boolean = true): boolean {
+    // 資金無限モード時は残高チェックをパスし、資金を減算しない
+    if (this.isInfiniteFunds) {
+      if (isConstruction) {
+        this.periodConstructionCost += amount;
+      } else {
+        this.periodMaintenanceCost += amount;
+      }
+      return true;
+    }
+
     if (this.funds < amount) {
-      return false; // Insufficient funds
+      return false; // 資金不足
     }
     this.funds -= amount;
     if (isConstruction) {
@@ -108,7 +126,18 @@ export class Economy {
     return `${hh}:${mm}`;
   }
 
+  public getHour(): number {
+    return Math.floor(Math.floor(this.dayTimerMin) / 60) % 24;
+  }
+
+  public getMinute(): number {
+    return Math.floor(this.dayTimerMin) % 60;
+  }
+
   public getFormattedFunds(): string {
+    if (this.isInfiniteFunds) {
+      return '¥∞ (無制限)';
+    }
     return '¥' + this.funds.toLocaleString('ja-JP');
   }
 

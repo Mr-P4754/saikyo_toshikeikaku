@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <title>最強都市計画 3D - Saikyo Toshi Keikaku</title>
+    <title>わがまちレールウェイ</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,81 +15,60 @@
       <!-- 3D Canvas Container -->
       <div id="canvas-container"></div>
 
-      <!-- Header HUD -->
+      <!-- Header HUD (⑩タイトル非表示 / ③横1行固定 / ⑨項目・数値の2行固定) -->
       <header id="hud-header">
         <div class="header-left">
-          <div class="game-logo">
-            <span class="logo-icon">🚅</span>
-            <div class="logo-text">
-              <span class="main-title">最強都市計画 <span class="version-tag">3D</span></span>
-              <span class="sub-title">Modern City & Railway Simulation</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="header-center">
-          <div class="stat-card date-card">
-            <span class="stat-icon">📅</span>
-            <div class="stat-info">
-              <span class="stat-label">日付</span>
+          <!-- ⑨ 2行固定ステータスカード: 上段=項目(アイコン+ラベル) / 下段=数値 -->
+          <div class="stat-cards-container">
+            <div class="stat-card date-card">
+              <div class="stat-header">
+                <span class="stat-icon">📅</span>
+                <span class="stat-label">日付</span>
+              </div>
               <span id="date-display" class="stat-value">01年 04月 01日</span>
             </div>
-          </div>
-          <!-- ⑥ 時刻表示 -->
-          <div class="stat-card clock-card">
-            <span class="stat-icon">🕒</span>
-            <div class="stat-info">
-              <span class="stat-label">時刻</span>
+            <div class="stat-card clock-card">
+              <div class="stat-header">
+                <span class="stat-icon">🕒</span>
+                <span class="stat-label">時刻</span>
+              </div>
               <span id="clock-display" class="stat-value">00:00</span>
             </div>
-          </div>
-          <div class="stat-card money-card">
-            <span class="stat-icon">💰</span>
-            <div class="stat-info">
-              <span class="stat-label">資金</span>
+            <div class="stat-card money-card" id="btn-funds-toggle" title="クリックでテスト用【資金無限モード】を切替（Mキーでも可）" style="cursor: pointer;">
+              <div class="stat-header">
+                <span class="stat-icon">💰</span>
+                <span class="stat-label">資金</span>
+              </div>
               <span id="funds-display" class="stat-value">¥100,000,000</span>
             </div>
-          </div>
-          <div class="stat-card pop-card">
-            <span class="stat-icon">👥</span>
-            <div class="stat-info">
-              <span class="stat-label">都市人口</span>
+            <div class="stat-card pop-card">
+              <div class="stat-header">
+                <span class="stat-icon">👥</span>
+                <span class="stat-label">都市人口</span>
+              </div>
               <span id="population-display" class="stat-value">0人</span>
             </div>
           </div>
         </div>
 
-        <div class="header-right">
-          <!-- Game Speed Controls -->
-          <div class="speed-controls">
-            <button id="btn-speed-pause" class="icon-btn" title="一時停止">⏸</button>
-            <button id="btn-speed-1" class="icon-btn active" title="通常速度 (1秒=ゲーム内10分)">▶</button>
-            <button id="btn-speed-2" class="icon-btn" title="高速 (1秒=ゲーム内1時間)">▶▶</button>
-            <button id="btn-speed-3" class="icon-btn" title="超高速 (1秒=ゲーム内6時間)">⏩</button>
-          </div>
-
-          <!-- Sound, Guide & Settings -->
-          <button id="btn-audio-toggle" class="icon-btn" title="サウンド切替">🔊</button>
-          <button id="btn-guide-toggle" class="action-btn" title="操作ガイド">❓ ガイド</button>
-          <button id="btn-report" class="action-btn" title="財務・都市レポート">📊 財務報告</button>
+        <!-- ⑧ 自由視点・昼間などの切り替え・グリッド・財務・ヘルプ・サウンドの各ボタンをアイコンのみにし、重ならないよう右上1列に整列 -->
+        <div class="header-right" id="quick-actions">
+          <button id="btn-cam-view" class="icon-action-btn" title="視点切替 (自由視点 / 前面展望)">🎥</button>
+          <button id="btn-time-toggle" class="icon-action-btn" title="昼夜切替 (昼間 / 夜間)"><span id="time-icon">☀️</span></button>
+          <button id="btn-grid-toggle" class="icon-action-btn active" title="グリッド表示切替">📐</button>
+          <button id="btn-report" class="icon-action-btn" title="財務・都市レポート">📊</button>
+          <button id="btn-guide-toggle" class="icon-action-btn" title="操作ヘルプ">❓</button>
+          <button id="btn-audio-toggle" class="icon-action-btn" title="サウンド切替">🔊</button>
         </div>
       </header>
 
-      <!-- View & Camera Controls (Top Right) -->
-      <div id="view-controls">
-        <button id="btn-cam-view" class="view-btn" title="カメラ視点切替">
-          <span class="btn-icon">🎥</span>
-          <span id="cam-view-text">自由視点</span>
-        </button>
-        <button id="btn-time-toggle" class="view-btn" title="昼夜切替">
-          <span id="time-icon" class="btn-icon">☀️</span>
-          <span id="time-text">昼間</span>
-        </button>
-        <button id="btn-grid-toggle" class="view-btn active" title="グリッド表示切替">
-          <span class="btn-icon">📐</span>
-          <span>グリッド</span>
-        </button>
-      </div>
+      <!-- ⑦ 時間進行ボタンをブラウザ右側に立て向きで配置 -->
+      <aside id="side-speed-controls" class="side-speed-controls" aria-label="ゲーム速度コントロール">
+        <button id="btn-speed-pause" class="speed-btn" title="一時停止">⏸</button>
+        <button id="btn-speed-1" class="speed-btn active" title="通常速度 (1秒=10分)">▶</button>
+        <button id="btn-speed-2" class="speed-btn" title="高速 (1秒=1時間)">▶▶</button>
+        <button id="btn-speed-3" class="speed-btn" title="超高速 (1秒=6時間)">⏩</button>
+      </aside>
 
       <!-- Cab / Driver View Overlay (Hidden by default) -->
       <div id="cab-view-overlay" class="hidden">
@@ -104,18 +83,29 @@
         </div>
       </div>
 
-      <!-- Quick Guide Banner (Positioned safely above toolbar, dismissible) -->
-      <div id="quick-guide">
-        <span class="guide-text">💡 <b>操作方法</b>: ドラッグでカメラ回転 / 2本指ドラッグ・右ドラッグ・WASDで移動 | ホイール・ピンチでズーム | 右クリック/🔄回転ボタンで設置向きを回転 | 下部ツールで線路・駅・建物を建設！</span>
-        <button id="btn-close-guide" class="close-guide-btn">✕</button>
+      <!-- ④ 駅ホーム有効長セレクター（回転・決定バーの上部に配置し重なりを解消） -->
+      <div id="station-length-selector" class="station-length-selector hidden">
+        <span class="selector-label">🚉 ホーム有効長:</span>
+        <div class="st-len-group">
+          <button class="st-len-btn" data-len="1">1両</button>
+          <button class="st-len-btn active" data-len="2">2両</button>
+          <button class="st-len-btn" data-len="3">3両</button>
+          <button class="st-len-btn" data-len="4">4両</button>
+        </div>
+        <div class="st-len-divider"></div>
+        <button id="btn-station-side-toggle" class="placement-btn station-side" title="ホームの左右配置を切替">🏢 ホーム: 右側</button>
       </div>
 
-      <!-- ⑧ 設置向き回転ヒント / ⑦ 設置決定・キャンセル / ⑤ タッチ操作用の回転ボタン -->
+      <!-- ③ ⑧ 設置向き回転バー / ⑦ 設置決定・キャンセル / ② 分岐器左右切替（スッキリした洗練デザイン） -->
       <div id="rotation-hint" class="rotation-hint hidden">
-        <span id="rotation-value">向き: -</span>
-        <button id="btn-rotate-placement" class="placement-btn rotate">🔄 回転</button>
-        <button id="btn-confirm-placement" class="placement-btn confirm hidden">🔨 設置を決定</button>
-        <button id="btn-cancel-placement" class="placement-btn cancel hidden">✕ キャンセル</button>
+        <div class="hint-info-badge" id="rotation-value">向き: -</div>
+        <div class="hint-actions">
+          <button id="btn-station-side-hint-toggle" class="placement-btn station-side hidden">🏢 ホーム: 右側</button>
+          <button id="btn-switch-side-toggle" class="placement-btn switch-side hidden">🔀 分岐: 右</button>
+          <button id="btn-rotate-placement" class="placement-btn rotate">🔄 回転</button>
+          <button id="btn-confirm-placement" class="placement-btn confirm hidden">🔨 設置を決定</button>
+          <button id="btn-cancel-placement" class="placement-btn cancel hidden">✕ 取消</button>
+        </div>
       </div>
 
       <!-- ⑤ カテゴリーサブメニュー（多層モーダル） -->
@@ -136,7 +126,7 @@
           </button>
           <div class="tool-divider"></div>
 
-          <!-- ⑤ ② カテゴリー化: 線路 / 駅 / 街づくり / 列車（各カテゴリー内に専用の撤去ボタンを設置） -->
+          <!-- カテゴリーボタン -->
           <button class="category-btn" data-category="track">
             <span class="tool-icon">🛤️</span>
             <span class="tool-name">線路</span>
@@ -175,8 +165,12 @@
             <span class="inspect-label" id="inspect-extra-label">詳細:</span>
             <span id="inspect-extra-val" class="inspect-value">-</span>
           </div>
+
+          <!-- ⑤ 詳細収支・乗降客数情報ボックス -->
+          <div id="inspect-financial-box" class="inspect-financial-box hidden"></div>
+
           <div class="inspect-actions" id="inspect-actions">
-            <!-- Dynamic action buttons (e.g. ② ポイント切り替えボタン) -->
+            <!-- Dynamic action buttons -->
           </div>
         </div>
       </aside>
@@ -186,10 +180,13 @@
         <div class="modal-card vehicle-card">
           <div class="modal-header">
             <h3>🚆 車両購入 & 編成選択</h3>
-            <button id="btn-close-vehicle" class="close-btn">✕</button>
+            <div class="modal-header-actions">
+              <button id="btn-fleet-from-modal" class="action-btn fleet-btn" title="車両基地・保有列車管理">🚆 保有車両・基地管理</button>
+              <button id="btn-close-vehicle" class="close-btn">✕</button>
+            </div>
           </div>
           <div class="modal-body">
-            <p class="modal-sub">運行させたい車両形式と編成両数を選択してください。</p>
+            <p class="modal-sub">運行させたい車両形式と編成両数を選択してください。購入後、車両基地に配属されます。</p>
 
             <!-- 車両カタロググリッド -->
             <div class="vehicle-grid" id="vehicle-grid">
@@ -213,7 +210,78 @@
                 <span>合計購入費用:</span>
                 <span id="veh-total-price" class="price-highlight">¥105,000,000</span>
               </div>
-              <button id="btn-confirm-buy-train" class="confirm-buy-btn">この列車を購入して線路に配置</button>
+              <button id="btn-confirm-buy-train" class="confirm-buy-btn">この列車を購入して車両基地へ配属</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑦ 車両管理モーダル (Depot / Fleet Registry) -->
+      <div id="fleet-modal" class="modal-overlay hidden">
+        <div class="modal-card fleet-card">
+          <div class="modal-header">
+            <h3>🚆 車両基地・保有列車管理</h3>
+            <button id="btn-close-fleet" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-sub">購入した列車の管理、線路への配置、車庫への回送ができます。</p>
+            <div id="fleet-list" class="fleet-grid">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ 操作ヘルプモーダル（全ヘルプ文章を集約） -->
+      <div id="help-modal" class="modal-overlay hidden">
+        <div class="modal-card help-card">
+          <div class="modal-header">
+            <h3>❓ 総合操作ガイド・ヘルプ</h3>
+            <button id="btn-close-help" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body help-body">
+            <div class="help-section">
+              <h4>🖱️ マウス・カメラの基本操作</h4>
+              <ul>
+                <li><b>設置・選択・決定</b>: <b>左クリック</b>（線路や駅の仮置き、タイルや列車の選択、撤去）</li>
+                <li><b>向きの回転</b>: <b>右クリック</b>（または「🔄 回転」ボタン）で直前の仮置き線路の方角をその場で変更</li>
+                <li><b>カメラ視点移動</b>: マウス<b>左ドラッグ</b> / スマホ1本指ドラッグ / キーボード WASD または 矢印キー</li>
+                <li><b>カメラ視点回転</b>: マウス<b>右ドラッグ</b>（または中ドラッグ）/ 2本指ドラッグ</li>
+                <li><b>ズーム</b>: マウスホイール / ピンチイン・アウト</li>
+                <li><b>視点切替</b>: 右上「🎥」アイコンで自由視点・前面展望に切替</li>
+                <li><b>テスト用資金無限</b>: ヘッダーの資金表示をクリック または <b>Mキー</b> で「資金無限モード」を切替</li>
+              </ul>
+            </div>
+
+            <div class="help-section">
+              <h4>🛤️ 建設・仮置き・ダイヤ設定</h4>
+              <ul>
+                <li><b>仮置きシステム</b>: 線路や駅を左クリックすると半透明ゴーストで仮置きされます。「🔨 設置を決定」でまとめて本設置されます。</li>
+                <li><b>駅のホーム左右選択</b>: 駅設置時に「🏢 ホーム: 右側 / 左側」ボタンでホームを線路のどちら側に置くか自由に選べます。</li>
+                <li><b>駅のダイヤ設定</b>: 駅をクリックしてインスペクターから「通常停車」「長時間待避」「通過」「折り返し」、および「毎時XX分発車（定時発車）」をダイヤ設定できます。折り返し時は反対側の先頭車が先頭となりその場から逆向きに走ります。</li>
+                <li><b>分岐器のダイヤ設定</b>: 分岐器をクリックして「手動」「直進固定」「分岐固定」「交互切替（列車が通過するたびに直進と分岐を自動切替）」「時間帯切替（昼間直進/夜間分岐）」を設定できます。</li>
+                <li><b>シーサスクロッシング</b>: 複線用の2×2マスX字型特別分岐。クリックで「直進」「渡り線A」「渡り線B」を開通切替できます。</li>
+                <li><b>駅の有効長・一括撤去</b>: 駅の有効長（1〜4両）を設定でき、列車は有効長内の駅で1回だけ停車します。撤去ツールで駅をクリックすると、その駅全体を一括撤去できます。</li>
+              </ul>
+            </div>
+
+            <div class="help-section">
+              <h4>🚆 車両の購入と運行管理</h4>
+              <ul>
+                <li><b>車両購入</b>: 下部メニュー「列車」→「車両購入」から5種類の厳選車種（通勤型・近郊型・快速用・急行型・特急型）と両数を指定して購入すると、車両基地に配属されます。</li>
+                <li><b>車両基地・保有管理</b>: 「列車」メニュー内の「保有車両・基地管理」、または車両購入画面の右上ボタンから呼び出せます。</li>
+                <li><b>指定位置・方向への配置</b>: 車両管理から「🚀 線路に配置する」を押し、配置したい線路を左クリック。進行方向も自由に選択できます。</li>
+                <li><b>車庫への回送</b>: 運行中の列車はいつでも車両管理から「📥 車庫へ回送」して回収できます。</li>
+                <li><b>前面展望</b>: 運行中の列車をクリックすると「前面展望モード」で運転士視点の車窓を楽しめます。</li>
+              </ul>
+            </div>
+
+            <div class="help-section">
+              <h4>🏙️ 都市の発展と収支</h4>
+              <ul>
+                <li><b>乗降客数連動</b>: 駅に列車を停車させて乗客を運ぶほど、駅前の発展スピードが加速し、商業ビルが建ち並びます。乗降客のいない駅周辺はほとんど発展しません。</li>
+                <li><b>駅・列車収支</b>: 駅をクリックすると利用料収入や維持費、列車をクリックすると運賃収入や運行費、乗車率をリアルタイムに確認できます。</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -247,9 +315,23 @@
               <h4>データ管理</h4>
               <div class="save-load-buttons">
                 <button id="btn-save-game" class="action-btn">💾 ゲームを保存 (自動保存有効)</button>
+                <button id="btn-infinite-funds" class="action-btn">💰 資金無限モード切替 (Mキー)</button>
                 <button id="btn-reset-city" class="danger-btn">🗑️ 都市を初期化 (更地から)</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ①② 駅・分岐 10分刻み大型ダイヤ設定モーダル -->
+      <div id="schedule-modal" class="modal-overlay hidden">
+        <div class="modal-card schedule-modal-card">
+          <div class="modal-header">
+            <h3 id="schedule-modal-title">⏱️ ダイヤ設定（10分刻みタイムライン）</h3>
+            <button id="btn-close-schedule" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body" id="schedule-modal-body">
+            <!-- Dynamically populated -->
           </div>
         </div>
       </div>

@@ -73,95 +73,66 @@ html, body {
   top: 16px;
   left: 16px;
   right: 16px;
-  z-index: 10;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  z-index: 10;
   pointer-events: none;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 12px;
 }
 
-.header-left, .header-center, .header-right {
+.header-left, .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   pointer-events: auto;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
-.game-logo {
+/* ⑨ 2行固定ステータスカード */
+.stat-cards-container {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
+  gap: 12px;
   background: var(--bg-panel);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-panel);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-}
-
-.logo-icon {
-  font-size: 24px;
-}
-
-.logo-text {
-  display: flex;
-  flex-direction: column;
-}
-
-.main-title {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: #ffffff;
-}
-
-.version-tag {
-  font-size: 10px;
-  padding: 2px 6px;
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
-  border-radius: var(--radius-full);
-  font-weight: 700;
-  color: #fff;
-  margin-left: 4px;
-}
-
-.sub-title {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.header-center {
-  background: var(--bg-panel);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border-panel);
-  border-radius: var(--radius-md);
   padding: 6px 14px;
   box-shadow: var(--shadow-sm);
-  gap: 16px;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .stat-card {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.stat-icon {
-  font-size: 18px;
-}
-
-.stat-info {
-  display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 90px;
+  padding: 2px 6px;
+  white-space: nowrap;
 }
 
-.stat-label {
-  font-size: 10px;
+.stat-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
   color: var(--text-muted);
-  text-transform: uppercase;
+  font-weight: 600;
   letter-spacing: 0.5px;
+  line-height: 1.2;
+}
+
+.stat-header .stat-icon {
+  font-size: 13px;
 }
 
 .stat-value {
@@ -169,60 +140,99 @@ html, body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.3px;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .money-card .stat-value { color: #34d399; }
 .pop-card .stat-value { color: #38bdf8; }
-.clock-card .stat-value { color: #fbbf24; font-variant-numeric: tabular-nums; }
+.clock-card .stat-value { color: #fbbf24; }
+.date-card .stat-value { color: #e2e8f0; }
 
-.speed-controls {
+/* ⑧ ヘッダー右側 アイコンのみの統一ボタン（自由視点・昼夜・グリッド・財務・ヘルプ・サウンド） */
+#quick-actions {
   display: flex;
-  background: var(--bg-panel);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border-panel);
-  border-radius: var(--radius-md);
-  padding: 4px;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
-.icon-btn, .action-btn, .view-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-main);
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+.icon-action-btn {
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 18px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
 }
 
-.icon-btn:hover, .action-btn:hover, .view-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+.icon-action-btn:hover {
+  background: var(--bg-panel-hover);
+  border-color: var(--border-focus);
+  transform: translateY(-1px);
 }
 
-.icon-btn.active, .view-btn.active {
+.icon-action-btn.active {
   background: var(--accent-blue);
   color: #fff;
   box-shadow: 0 0 10px rgba(2, 132, 199, 0.5);
 }
 
-.action-btn {
+/* ⑦ 時間進行ボタン（ブラウザ右側に縦向きで配置） */
+.side-speed-controls {
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   background: var(--bg-panel);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-panel);
-  padding: 8px 14px;
   border-radius: var(--radius-md);
-  gap: 6px;
+  padding: 6px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  pointer-events: auto;
 }
 
-.action-btn:hover {
-  background: var(--bg-panel-hover);
-  border-color: var(--border-focus);
+.speed-btn {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.speed-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-panel);
+}
+
+.speed-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(2, 132, 199, 0.6);
 }
 
 /* ==========================================================================
@@ -256,30 +266,30 @@ html, body {
 }
 
 /* ==========================================================================
-   ④ Quick Guide (No longer overlaps toolbar, clean & dismissible)
+   ④ Quick Guide (Positioned safely below header, completely separated from toolbar)
    ========================================================================== */
 #quick-guide {
   position: absolute;
-  bottom: 104px; /* Placed above toolbar with comfortable margin */
+  top: 72px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(15, 23, 42, 0.95);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  border: 1px solid rgba(56, 189, 248, 0.4);
   border-radius: var(--radius-full);
   padding: 6px 16px;
-  /* ⑦ カテゴリーサブメニュー・設置決定ヒントより必ず背面に表示し、操作ボタンを隠さないようにする */
-  z-index: 11;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   pointer-events: auto;
   transition: all 0.3s;
+  max-width: 90vw;
 }
 
 .guide-text {
-  font-size: 12px;
+  font-size: 11.5px;
   color: #e2e8f0;
 }
 
@@ -299,27 +309,99 @@ html, body {
 }
 
 /* ==========================================================================
-   ⑧ 設置向き回転ヒント
+   ④ 駅ホーム有効長セレクター（駅ツール選択時に表示）
+   ========================================================================== */
+.station-length-selector {
+  position: absolute;
+  bottom: 154px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: var(--shadow-lg);
+  white-space: nowrap;
+}
+
+.selector-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.st-len-group {
+  display: flex;
+  gap: 4px;
+}
+
+.st-len-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #cbd5e1;
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.st-len-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.st-len-btn.active {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+}
+
+/* ==========================================================================
+   ③ ⑧ 設置向き回転ヒント（ボタンとテキストの重なり防止・上下2段レイアウト）
    ========================================================================== */
 .rotation-hint {
   position: absolute;
-  bottom: 148px;
+  bottom: 92px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(15, 23, 42, 0.95);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: var(--radius-full);
-  padding: 6px 10px 6px 16px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: var(--radius-lg);
+  padding: 8px 14px;
   z-index: 15;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: #fde68a;
+  gap: 6px;
   box-shadow: var(--shadow-lg);
-  pointer-events: none;
-  white-space: nowrap;
+  pointer-events: auto;
+  max-width: 92vw;
+  text-align: center;
+}
+
+.hint-info-badge {
+  font-size: 12px;
+  color: #fef08a;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.hint-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 /* ⑦ 設置決定・キャンセルボタン */
@@ -347,6 +429,36 @@ html, body {
   color: #fecdd3;
 }
 
+/* ② 分岐器左右切替ボタン */
+.placement-btn.switch-side {
+  background: rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(168, 85, 247, 0.6);
+  color: #e9d5ff;
+}
+
+/* ① 駅ホーム左右切替ボタン */
+.placement-btn.station-side {
+  background: rgba(59, 130, 246, 0.25);
+  border: 1px solid rgba(59, 130, 246, 0.6);
+  color: #bfdbfe;
+}
+
+.st-len-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.money-card.infinite-funds {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5) !important;
+}
+
+.money-card.infinite-funds .stat-value {
+  color: #fbbf24 !important;
+  text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+}
+
 /* ⑤ タッチ端末用の回転ボタン（右クリックできない端末の代替操作） */
 .placement-btn.rotate {
   background: rgba(56, 189, 248, 0.2);
@@ -359,7 +471,7 @@ html, body {
 }
 
 /* ==========================================================================
-   ⑤ カテゴリーサブメニュー（多層モーダル）
+   ⑤ カテゴリーサブメニュー（多層モーダル・ヒントより前面に表示）
    ========================================================================== */
 .category-btn {
   background: transparent;
@@ -398,7 +510,7 @@ html, body {
   bottom: 104px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 14;
+  z-index: 30; /* 回転ヒントより確実に前面に出るようにする */
   width: 560px;
   max-width: 92vw;
   background: var(--bg-panel);
@@ -657,6 +769,92 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* ⑤ 詳細収支・乗降客数情報ボックス */
+.inspect-financial-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fin-title {
+  font-weight: 700;
+  color: #38bdf8;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 3px;
+  margin-bottom: 2px;
+}
+
+.fin-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fin-label {
+  color: var(--text-muted);
+}
+
+.fin-val {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.fin-val.positive {
+  color: #10b981;
+}
+
+.fin-val.negative {
+  color: #f43f5e;
+}
+
+.st-edit-len-box {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.st-edit-len-label {
+  font-size: 11.5px;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.st-edit-len-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.st-edit-btn {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #bae6fd;
+  border-radius: var(--radius-sm);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.st-edit-btn:hover {
+  background: rgba(56, 189, 248, 0.35);
+  color: #fff;
+}
+
+.st-edit-btn.active {
+  background: #0284c7;
+  color: #fff;
+  border-color: #38bdf8;
 }
 
 /* ② ポイント切り替えボタン */
@@ -989,11 +1187,12 @@ html, body {
     justify-content: flex-end;
   }
   #quick-guide {
-    bottom: 90px;
-    width: 90vw;
+    top: 104px;
+    bottom: auto;
+    width: 92vw;
   }
   .guide-text {
-    font-size: 10.5px;
+    font-size: 10px;
   }
   #build-toolbar {
     bottom: 12px;
@@ -1008,7 +1207,7 @@ html, body {
   }
   #view-controls {
     top: auto;
-    bottom: 100px;
+    bottom: 96px;
     right: 8px;
   }
   .view-btn span:not(.btn-icon) {
@@ -1019,25 +1218,25 @@ html, body {
   }
   #tool-submenu {
     width: 94vw;
-    bottom: 96px;
+    bottom: 88px;
     padding: 10px;
   }
   .tool-submenu-grid {
     grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
     gap: 6px;
   }
+  .station-length-selector {
+    bottom: 146px;
+    max-width: 94vw;
+  }
   .rotation-hint {
-    bottom: 140px;
-    flex-wrap: wrap;
-    justify-content: center;
-    width: 92vw;
-    padding: 8px 12px;
-    white-space: normal;
-    text-align: center;
+    bottom: 84px;
+    width: 94vw;
+    padding: 6px 10px;
   }
   #inspector-panel {
-    width: 90vw;
-    left: 5vw;
+    width: 92vw;
+    left: 4vw;
     bottom: 16px;
   }
   .modal-card, .vehicle-card {
@@ -1075,4 +1274,651 @@ html, body {
   #tool-submenu .tool-name {
     display: inline;
   }
+}
+
+/* ==========================================================================
+   ⑦ 車両基地・保有列車管理モーダル (#fleet-modal)
+   ========================================================================== */
+.fleet-card {
+  width: 720px;
+  max-width: 95vw;
+}
+
+.fleet-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.fleet-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  gap: 16px;
+  transition: all 0.2s;
+}
+
+.fleet-item-card:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.fleet-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.fleet-item-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fleet-item-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.fleet-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.fleet-badge.deployed {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #10b981;
+  color: #6ee7b7;
+}
+
+.fleet-badge.in-depot {
+  background: rgba(148, 163, 184, 0.2);
+  border: 1px solid #94a3b8;
+  color: #cbd5e1;
+}
+
+.fleet-item-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: #94a3b8;
+  flex-wrap: wrap;
+}
+
+.fleet-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fleet-btn-deploy {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  border: 1px solid #38bdf8;
+  color: #fff;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.fleet-btn-deploy:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
+.fleet-btn-recall {
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  color: #fecdd3;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fleet-btn-track {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #e2e8f0;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fleet-empty-hint {
+  text-align: center;
+  padding: 30px 10px;
+  color: #94a3b8;
+  font-size: 13.5px;
+}
+
+/* ==========================================================================
+   ④ 操作ヘルプモーダル (#help-modal)
+   ========================================================================== */
+.help-card {
+  width: 760px;
+  max-width: 95vw;
+}
+
+.help-body {
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 8px;
+}
+
+.help-section {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+}
+
+.help-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #38bdf8;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+  padding-bottom: 6px;
+}
+
+.help-section ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+
+.help-section li {
+  margin-bottom: 4px;
+}
+
+/* ==========================================================================
+   ② 駅・分岐ダイヤ設定UI (#inspect-schedule-box)
+   ========================================================================== */
+.schedule-box {
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schedule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.schedule-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.schedule-btn-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.schedule-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+  border-radius: var(--radius-sm);
+  padding: 3px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.schedule-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.schedule-btn.active {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+/* ==========================================================================
+   ① 24時間タイムラインバー方式ダイヤ設定UI
+   ========================================================================== */
+.timeline-bar-container {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  user-select: none;
+}
+
+.timeline-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.timeline-cells-wrapper {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  padding: 1px;
+  position: relative;
+}
+
+.timeline-cell {
+  height: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: filter 0.1s, transform 0.1s;
+  position: relative;
+}
+
+.timeline-cell:hover {
+  filter: brightness(1.25);
+  transform: scale(1.08);
+  z-index: 2;
+}
+
+.timeline-cell.current-hour::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid #facc15;
+}
+
+.timeline-cell.current-hour {
+  box-shadow: 0 0 0 1.5px #facc15 inset;
+}
+
+/* 駅用モードカラー */
+.timeline-cell.mode-stop {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.timeline-cell.mode-wait {
+  background: #f59e0b;
+  color: #0f172a;
+}
+
+.timeline-cell.mode-pass {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.timeline-cell.mode-reverse {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+/* 分岐器用モードカラー */
+.timeline-cell.dir-straight {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.timeline-cell.dir-diverge {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+
+/* タイムラインツールバー・パレット */
+.timeline-palette {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.palette-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  transition: all 0.15s;
+}
+
+.palette-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.palette-btn.active {
+  color: #fff;
+  border-color: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+}
+
+.palette-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.palette-dot.stop { background: #10b981; }
+.palette-dot.wait { background: #f59e0b; }
+.palette-dot.pass { background: #ef4444; }
+.palette-dot.reverse { background: #3b82f6; }
+.palette-dot.straight { background: #10b981; }
+.palette-dot.diverge { background: #8b5cf6; }
+
+.timeline-presets {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.preset-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+}
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   ①② 大型ダイヤ設定モーダル（10分刻みタイムライン）
+   ========================================================================== */
+.schedule-modal-card {
+  width: 660px;
+  max-width: 95vw;
+  max-height: 88vh;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.75);
+  border-radius: var(--radius-lg);
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sched-modal-sub {
+  font-size: 11.5px;
+  color: #94a3b8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sched-modal-sub .now-time {
+  color: #facc15;
+  font-weight: 700;
+}
+
+.sched-modal-palette-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sched-modal-hour-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sched-modal-hour-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  display: flex;
+  justify-content: space-between;
+}
+
+.sched-hour-tabs {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+}
+
+.sched-hour-tab {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: all 0.12s;
+  user-select: none;
+}
+
+.sched-hour-tab:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.sched-hour-tab.active {
+  background: #0284c7;
+  color: #fff;
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+}
+
+.sched-hour-tab.now::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #facc15;
+}
+
+/* 10分スロット（メイン操作カード） */
+.sched-ten-min-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.sched-ten-min-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sched-ten-min-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.sched-ten-min-card {
+  height: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: filter 0.12s, transform 0.1s;
+  user-select: none;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+}
+
+.sched-ten-min-card:hover {
+  filter: brightness(1.25);
+  transform: scale(1.04);
+}
+
+.sched-ten-min-card.current-slot {
+  box-shadow: 0 0 0 2px #facc15, 0 0 10px rgba(250, 204, 21, 0.5);
+}
+
+.sched-ten-min-card .time-text {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.sched-ten-min-card .status-text {
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* 24時間全体マップ（144スロット） */
+.sched-overview-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sched-overview-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  display: flex;
+  justify-content: space-between;
+}
+
+.sched-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sched-overview-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5px;
+}
+
+.sched-overview-cell {
+  height: 10px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: filter 0.1s;
+}
+
+.sched-overview-cell:hover {
+  filter: brightness(1.3);
+}
+
+.sched-modal-open-btn {
+  width: 100%;
+  padding: 7px 10px;
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  border: 1px solid #38bdf8;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3);
+  margin-top: 4px;
+}
+
+.sched-modal-open-btn:hover {
+  background: linear-gradient(135deg, #0369a1, #075985);
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.5);
+  transform: translateY(-1px);
 }

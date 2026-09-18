@@ -50,10 +50,11 @@ export class CameraController {
 
     this.domElement.addEventListener('mousedown', (e) => {
       if (this.mode !== 'orbit') return;
+      // ⑤ カメラ操作: 左ドラッグ＝視点移動(Pan)、右ドラッグ/中ドラッグ＝視点回転(Orbit)
       if (e.button === 0) {
-        this.isDragging = true;
-      } else if (e.button === 2 || e.button === 1) {
         this.isPanning = true;
+      } else if (e.button === 2 || e.button === 1) {
+        this.isDragging = true;
       }
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
