@@ -4,8 +4,9 @@
 export interface VehicleModelInfo {
   id: string;
   name: string;
-  category: 'commuter' | 'suburban' | 'rapid' | 'express' | 'limited-express';
+  category: 'freight' | 'commuter' | 'suburban' | 'rapid' | 'express' | 'limited-express';
   description: string;
+  speedTilesPerMinute: number; // 移動速度 (マス/分 = 等速時のマス/秒)
   basePrice: number; // 1両あたりの購入価格
   baseCapacity: number; // 1両あたりの定員
   maxSpeed: number; // 最高速度 (km/h)
@@ -19,10 +20,26 @@ export interface VehicleModelInfo {
 
 export const VEHICLE_CATALOG: VehicleModelInfo[] = [
   {
+    id: 'freight-train',
+    name: '貨物列車 (EF級)',
+    category: 'freight',
+    description: 'コンテナ・物資輸送を担う電気機関車牽引編成。低速ながら着実な運賃収入と低運行費が特徴。',
+    speedTilesPerMinute: 1.0, // 基準速度: 1.0 マス/分（現実1秒で1マス）
+    basePrice: 18000000,
+    baseCapacity: 0, // 貨物専用（旅客定員なし）
+    maxSpeed: 75,
+    farePerRide: 0, // 旅客運賃なし（コンテナ輸送で運賃計上）
+    dailyRunningCostPerCar: 9000,
+    bodyColor: 0x1e3a8a, // ディープブルー
+    stripeColor: 0xf59e0b, // ゴールド帯
+    roofColor: 0x334155
+  },
+  {
     id: 'commuter-train',
     name: '通勤型列車',
     category: 'commuter',
     description: '都市部の過密輸送を支える4ドア通勤型。高加減速・高定員で、低廉な運賃と低い運行費が強み。',
+    speedTilesPerMinute: 1.5, // 1.5 マス/分（約0.67秒で1マス）
     basePrice: 22000000,
     baseCapacity: 150,
     maxSpeed: 95,
@@ -37,6 +54,7 @@ export const VEHICLE_CATALOG: VehicleModelInfo[] = [
     name: '近郊型列車',
     category: 'suburban',
     description: '都市とベッドタウンを結ぶセミクロスシート近郊型。乗客定員と速度のバランスが優れ、汎用性抜群。',
+    speedTilesPerMinute: 2.0, // 2.0 マス/分（0.5秒で1マス）
     basePrice: 28000000,
     baseCapacity: 120,
     maxSpeed: 110,
@@ -51,6 +69,7 @@ export const VEHICLE_CATALOG: VehicleModelInfo[] = [
     name: '快速用列車',
     category: 'rapid',
     description: '主要駅を結ぶ高速快速用トレイン。軽量ステンレス車体で俊敏に走行し、高い運賃収入を生み出します。',
+    speedTilesPerMinute: 2.0, // 2.0 マス/分（0.5秒で1マス）
     basePrice: 35000000,
     baseCapacity: 110,
     maxSpeed: 125,
@@ -65,6 +84,7 @@ export const VEHICLE_CATALOG: VehicleModelInfo[] = [
     name: '急行型列車',
     category: 'express',
     description: '長距離優等列車として設計された伝統の急行型。ゆったりとした車内空間と、割高な急行運賃が魅力。',
+    speedTilesPerMinute: 2.5, // 2.5 マス/分（0.4秒で1マス）
     basePrice: 42000000,
     baseCapacity: 90,
     maxSpeed: 135,
@@ -78,7 +98,8 @@ export const VEHICLE_CATALOG: VehicleModelInfo[] = [
     id: 'limited-express-train',
     name: '特急型列車',
     category: 'limited-express',
-    description: '鉄道会社の威信をかけたフラッグシップ特急。最高峰の160km/h走行と最高額の特急運賃で莫大な収益を実現。',
+    description: '鉄道会社の威信をかけたフラッグシップ特急。最高峰の俊足走行と最高額の特急運賃で莫大な収益を実現。',
+    speedTilesPerMinute: 3.0, // 3.0 マス/分（約0.33秒で1マス）
     basePrice: 55000000,
     baseCapacity: 75,
     maxSpeed: 160,

@@ -11,24 +11,43 @@ export interface FinancialReportData {
 }
 
 export class Economy {
-  public funds: number = 100000000; // ¥100,000,000 initial capital
+  public funds: number = 100000000; // 初期資金: ¥100,000,000
   public population: number = 0;
 
-  // Calendar
-  public year: number = 1;
+  // カレンダー (マスター設計書: 2026年4月開始)
+  public year: number = 2026;
   public month: number = 4;
   public day: number = 1;
 
-  // ⑤ ゲーム内時刻（当日の経過分数, 0-1440）。速度設定ごとの「現実1秒あたりのゲーム内分数」を直接加算する。
+  // ゲーム内時刻（当日の経過分数, 0-1440）
   private dayTimerMin: number = 0;
 
-  // Accounting for current period
+  // 当期（直近月）の収支
   public periodFareIncome: number = 0;
   public periodConstructionCost: number = 0;
   public periodMaintenanceCost: number = 0;
 
-  // ② 開発テスト用: 資金無限モード
+  // 年間（前年度/当年度）会計用アキュムレータ
+  public fiscalYearFareIncome: number = 0;
+  public fiscalYearMaintenanceCost: number = 0;
+  public fiscalYearConstructionCost: number = 0;
+
+  // 確定税額（3月31日確定、5月30日納付）
+  public pendingCorporateTax: number = 0;
+  public pendingPropertyTax: number = 0;
+  public pendingTotalTax: number = 0;
+  public lastSettledYear: number = 2025;
+
+  // 開発テスト用: 資金無限モード
   public isInfiniteFunds: boolean = false;
+
+  /**
+   * 追加投資（新規線路敷設・車両購入等）が可能かどうかの判定フラグ
+   * 資金がマイナス（赤字）の場合は追加投資のみロックされ、運行や街の成長は継続する
+   */
+  public get canInvest(): boolean {
+    return this.isInfiniteFunds || this.funds >= 0;
+  }
 
   constructor() {
     this.loadFromStorage();
@@ -43,7 +62,26 @@ export class Economy {
     this.funds += amount;
     if (amount > 0) {
       this.periodFareIncome += amount;
+      this.fiscalYearFareIncome += amount;
     }
+  }
+
+  /**
+   * ② 営業収入（運賃売上）に計上しない、純粋な資金返金・資産売却代金
+   * （車両減車売却や仮置きキャンセル等の返金に使用し、売上過剰課税から除外する）
+   */
+  public refundFunds(amount: number) {
+    this.funds += amount;
+  }
+
+  /**
+   * 当期（直近月）の収支アキュムレータをリセット
+   * 月またぎ（onMonthPassed）時に呼び出され、「今期収支」レポートの無限累計インフレを防止する
+   */
+  public resetPeriodStats(): void {
+    this.periodFareIncome = 0;
+    this.periodConstructionCost = 0;
+    this.periodMaintenanceCost = 0;
   }
 
   public spendFunds(amount: number, isConstruction: boolean = true): boolean {
@@ -51,26 +89,120 @@ export class Economy {
     if (this.isInfiniteFunds) {
       if (isConstruction) {
         this.periodConstructionCost += amount;
+        this.fiscalYearConstructionCost += amount;
       } else {
         this.periodMaintenanceCost += amount;
+        this.fiscalYearMaintenanceCost += amount;
       }
       return true;
     }
 
-    if (this.funds < amount) {
-      return false; // 資金不足
-    }
-    this.funds -= amount;
+    // 建設費・新規投資の場合: 資金が不足（または赤字中）なら購入不可
     if (isConstruction) {
+      if (!this.canInvest || this.funds < amount) {
+        return false; // 資金不足または追加投資ロック
+      }
+      this.funds -= amount;
       this.periodConstructionCost += amount;
-    } else {
-      this.periodMaintenanceCost += amount;
+      this.fiscalYearConstructionCost += amount;
+      return true;
     }
+
+    // 維持費・運行費等の固定費の場合: 赤字であっても引き落としを許可し、運行を継続させる
+    this.funds -= amount;
+    this.periodMaintenanceCost += amount;
+    this.fiscalYearMaintenanceCost += amount;
     return true;
   }
 
   public addPopulation(amount: number) {
     this.population += amount;
+  }
+
+  /**
+   * 毎年3月31日 23:59 に呼び出される税額確定処理
+   * 前年度の実績から法人税（黒字の30%）および保有資産に応じた固定資産税を算出する
+   */
+  public assessAnnualTax(trackTiles: number, stationTiles: number, totalCars: number): {
+    fiscalYear: number;
+    operatingProfit: number;
+    constructionCost: number;
+    taxableIncome: number;
+    corporateTax: number;
+    propertyTax: number;
+    totalTax: number;
+    trackTax: number;
+    stationTax: number;
+    carTax: number;
+  } {
+    const fiscalYear = this.year;
+    this.lastSettledYear = fiscalYear;
+
+    // 営業黒字（運賃収入 - 維持費）
+    const operatingProfit = this.fiscalYearFareIncome - this.fiscalYearMaintenanceCost;
+
+    // 設備投資額（建設費・車両購入費等）
+    const constructionCost = this.fiscalYearConstructionCost;
+
+    // 課税所得（設備投資控除後）: 利益を街の開発に再投資した分は損金算入（全額経費控除）
+    const taxableIncome = operatingProfit - constructionCost;
+
+    // 法人税: 課税所得が黒字の場合のみ30%。設備投資で再投資した場合は0円（節税成功）
+    const corporateTax = taxableIncome > 0 ? Math.floor(taxableIncome * 0.3) : 0;
+
+    // 固定資産税: 線路1マス5万円、駅ホーム1マス20万円、車両1両50万円
+    const trackTax = trackTiles * 50000;
+    const stationTax = stationTiles * 200000;
+    const carTax = totalCars * 500000;
+    const propertyTax = trackTax + stationTax + carTax;
+
+    const totalTax = corporateTax + propertyTax;
+
+    this.pendingCorporateTax = corporateTax;
+    this.pendingPropertyTax = propertyTax;
+    this.pendingTotalTax = totalTax;
+
+    // 新年度に向けて年間会計アキュムレータをリセット
+    this.fiscalYearFareIncome = 0;
+    this.fiscalYearMaintenanceCost = 0;
+    this.fiscalYearConstructionCost = 0;
+
+    return {
+      fiscalYear,
+      operatingProfit,
+      constructionCost,
+      taxableIncome,
+      corporateTax,
+      propertyTax,
+      totalTax,
+      trackTax,
+      stationTax,
+      carTax
+    };
+  }
+
+  /**
+   * 毎年5月30日 00:00 に呼び出される納税執行処理
+   * 確定した税金をプレイヤー資金から自動引き落としする
+   * 資金が赤字になってもゲームオーバーにせず運行を継続可能とする
+   */
+  public executeTaxPayment(): { paidAmount: number; remainingFunds: number; isDeficit: boolean } {
+    const taxToPay = this.pendingTotalTax;
+
+    if (!this.isInfiniteFunds) {
+      this.funds -= taxToPay;
+    }
+
+    // 納税済みにリセット
+    this.pendingTotalTax = 0;
+    this.pendingCorporateTax = 0;
+    this.pendingPropertyTax = 0;
+
+    return {
+      paidAmount: taxToPay,
+      remainingFunds: this.funds,
+      isDeficit: this.funds < 0
+    };
   }
 
   /**
@@ -103,6 +235,7 @@ export class Economy {
           this.year++;
         }
         onMonthPassed();
+        this.resetPeriodStats();
       }
 
       onDayPassed();
@@ -134,9 +267,16 @@ export class Economy {
     return Math.floor(this.dayTimerMin) % 60;
   }
 
+  public setTime(hour: number, minute: number): void {
+    this.dayTimerMin = (hour * 60) + minute;
+  }
+
   public getFormattedFunds(): string {
     if (this.isInfiniteFunds) {
       return '¥∞ (無制限)';
+    }
+    if (this.funds < 0) {
+      return `¥ -${Math.abs(this.funds).toLocaleString('ja-JP')}`;
     }
     return '¥' + this.funds.toLocaleString('ja-JP');
   }
@@ -170,7 +310,14 @@ export class Economy {
         day: this.day,
         periodFareIncome: this.periodFareIncome,
         periodConstructionCost: this.periodConstructionCost,
-        periodMaintenanceCost: this.periodMaintenanceCost
+        periodMaintenanceCost: this.periodMaintenanceCost,
+        fiscalYearFareIncome: this.fiscalYearFareIncome,
+        fiscalYearMaintenanceCost: this.fiscalYearMaintenanceCost,
+        fiscalYearConstructionCost: this.fiscalYearConstructionCost,
+        pendingCorporateTax: this.pendingCorporateTax,
+        pendingPropertyTax: this.pendingPropertyTax,
+        pendingTotalTax: this.pendingTotalTax,
+        lastSettledYear: this.lastSettledYear
       };
       localStorage.setItem('stk_3d_economy', JSON.stringify(data));
     } catch (e) {
@@ -185,12 +332,19 @@ export class Economy {
         const data = JSON.parse(raw);
         this.funds = data.funds ?? 100000000;
         this.population = data.population ?? 0;
-        this.year = data.year ?? 1;
+        this.year = data.year && data.year >= 2026 ? data.year : 2026;
         this.month = data.month ?? 4;
         this.day = data.day ?? 1;
         this.periodFareIncome = data.periodFareIncome ?? 0;
         this.periodConstructionCost = data.periodConstructionCost ?? 0;
         this.periodMaintenanceCost = data.periodMaintenanceCost ?? 0;
+        this.fiscalYearFareIncome = data.fiscalYearFareIncome ?? 0;
+        this.fiscalYearMaintenanceCost = data.fiscalYearMaintenanceCost ?? 0;
+        this.fiscalYearConstructionCost = data.fiscalYearConstructionCost ?? 0;
+        this.pendingCorporateTax = data.pendingCorporateTax ?? 0;
+        this.pendingPropertyTax = data.pendingPropertyTax ?? 0;
+        this.pendingTotalTax = data.pendingTotalTax ?? 0;
+        this.lastSettledYear = data.lastSettledYear ?? 2025;
         return true;
       }
     } catch (e) {
@@ -202,12 +356,19 @@ export class Economy {
   public resetAll() {
     this.funds = 100000000;
     this.population = 0;
-    this.year = 1;
+    this.year = 2026;
     this.month = 4;
     this.day = 1;
     this.periodFareIncome = 0;
     this.periodConstructionCost = 0;
     this.periodMaintenanceCost = 0;
+    this.fiscalYearFareIncome = 0;
+    this.fiscalYearMaintenanceCost = 0;
+    this.fiscalYearConstructionCost = 0;
+    this.pendingCorporateTax = 0;
+    this.pendingPropertyTax = 0;
+    this.pendingTotalTax = 0;
+    this.lastSettledYear = 2025;
     try {
       localStorage.removeItem('stk_3d_economy');
     } catch (e) {}
