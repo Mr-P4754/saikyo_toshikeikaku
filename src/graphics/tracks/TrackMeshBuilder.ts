@@ -158,15 +158,16 @@ export class TrackMeshBuilder {
   }
 
   /**
-   * 曲線レールセグメント（地上・高架）
+   * 曲線レールセグメント（地上・高架・トンネル）
    */
   public static createCurveTrackSegment(
     curveDir: 'N_E' | 'E_S' | 'S_W' | 'W_N',
     isElevated: boolean = false,
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
     const group = new THREE.Group();
-    const railBaseHeight = isElevated ? 0.2 : 0;
+    const railBaseHeight = isElevated ? 0.2 : (isTunnel ? 0.05 : 0);
 
     if (isElevated) {
       if (pierHeight > 0) {
@@ -180,6 +181,48 @@ export class TrackMeshBuilder {
       const deck = new THREE.Mesh(deckGeo, GameMaterials.concreteMat);
       deck.position.y = 0.175;
       group.add(deck);
+    } else if (isTunnel) {
+      // トンネル道床・コンクリートスラブ
+      const slabGeo = new THREE.BoxGeometry(1.95, 0.2, 1.95);
+      const slab = new THREE.Mesh(slabGeo, GameMaterials.concreteMat);
+      slab.position.y = 0.1;
+      slab.receiveShadow = true;
+      group.add(slab);
+
+      // 曲線に沿ったシールドトンネル円弧側壁・アーチリブ
+      const [idxA, idxB] = this.CURVE_DIR_INDICES[curveDir];
+      const vA = this.DIR_IDX_VEC[idxA];
+      const vB = this.DIR_IDX_VEC[idxB];
+      const cx = vA.x + vB.x;
+      const cz = vA.z + vB.z;
+
+      const edgeAngle = (v: { x: number; z: number }) => Math.atan2(v.z - cz, v.x - cx);
+      let a1 = edgeAngle(vA);
+      let a2 = edgeAngle(vB);
+      let diff = a2 - a1;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      a2 = a1 + diff;
+
+      // 外側側壁（r = 1.65）
+      const rOuterWall = 1.65;
+      for (let s = 0; s < 4; s++) {
+        const theta = a1 + ((s + 0.5) / 4) * (a2 - a1);
+        const wallPiece = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.4, 0.7), GameMaterials.concreteMat);
+        wallPiece.position.set(cx + Math.cos(theta) * rOuterWall, 0.8, cz + Math.sin(theta) * rOuterWall);
+        wallPiece.rotation.y = -theta;
+        group.add(wallPiece);
+      }
+
+      // 天井アーチリブ梁（3箇所）
+      const ribGeo = new THREE.BoxGeometry(1.88, 0.15, 0.35);
+      for (let s = 0; s < 3; s++) {
+        const theta = a1 + ((s + 0.5) / 3) * (a2 - a1);
+        const rib = new THREE.Mesh(ribGeo, GameMaterials.concreteMat);
+        rib.position.set(cx + Math.cos(theta) * 1.0, 1.5, cz + Math.sin(theta) * 1.0);
+        rib.rotation.y = -theta;
+        group.add(rib);
+      }
     } else {
       const bedGeo = new THREE.BoxGeometry(1.9, 0.16, 1.9);
       const bed = new THREE.Mesh(bedGeo, GameMaterials.ballastMat);
@@ -201,17 +244,20 @@ export class TrackMeshBuilder {
     isDiverged: boolean = false,
     isElevated: boolean = false,
     branchSide: 'left' | 'right' = 'right',
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
     const group = new THREE.Group();
-    const railBaseHeight = isElevated ? 0.2 : 0;
+    const railBaseHeight = isElevated ? 0.2 : (isTunnel ? 0.05 : 0);
     const back = (forward + 2) % 4;
     const branchDir = branchSide === 'left' ? (forward + 3) % 4 : (forward + 1) % 4;
     const axisRotation = (forward === 1 || forward === 3) ? 1 : 0;
 
     const baseTrack = isElevated
       ? this.createElevatedTrack(axisRotation, true, pierHeight)
-      : this.createGroundTrack(axisRotation, false);
+      : (isTunnel
+        ? this.createTunnelTrack(axisRotation)
+        : this.createGroundTrack(axisRotation, false));
     group.add(baseTrack);
 
     this.addCurveRails(group, back, branchDir, railBaseHeight, 2);
@@ -239,15 +285,18 @@ export class TrackMeshBuilder {
     role: 0 | 1 | 2 | 3,
     isElevated: boolean = false,
     crossingState: 'straight' | 'cross-a' | 'cross-b' = 'straight',
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
     const group = new THREE.Group();
-    const railBaseHeight = isElevated ? 0.2 : 0;
+    const railBaseHeight = isElevated ? 0.2 : (isTunnel ? 0.05 : 0);
     const isEastWest = (along === 1 || along === 3);
 
     const baseTrack = isElevated
       ? this.createElevatedTrack(0, true, pierHeight)
-      : this.createGroundTrack(0, false);
+      : (isTunnel
+        ? this.createTunnelTrack(0)
+        : this.createGroundTrack(0, false));
     group.add(baseTrack);
 
     let pStart: THREE.Vector2;

@@ -701,13 +701,13 @@ export class TrainManager {
     // 【時空の歪み解消】サブステッピング（Sub-stepping）の導入
     // 高倍速（超高速・極超高速 720倍速=12時間/秒）でも脱線・閉塞すり抜け・駅通過判定の飛び越しが起きないよう、
     // 1サブステップあたりの最大移動進行度を制御し、適切なサブステップ数に均等分割する。
-    const MAX_SUB_STEP_PROGRESS = speedMultiplier >= 60 ? 0.75 : 0.25;
+    const MAX_SUB_STEP_PROGRESS = speedMultiplier >= 60 ? 0.35 : 0.25;
     let maxSpeed = 1.5;
     for (const t of this.trains) {
       if (t.speed > maxSpeed) maxSpeed = t.speed;
     }
     const maxProgressInFrame = maxSpeed * dt;
-    const maxAllowedSteps = speedMultiplier >= 60 ? 40 : 10;
+    const maxAllowedSteps = speedMultiplier >= 60 ? 120 : 20;
     const numSubSteps = Math.min(Math.max(1, Math.ceil(maxProgressInFrame / MAX_SUB_STEP_PROGRESS)), maxAllowedSteps);
     const subDt = dt / numSubSteps;
 
@@ -934,6 +934,7 @@ export class TrainManager {
           train.progress = 0.999;
         }
         train.currentTile = { ...train.targetTile };
+        this.recordCurrentHeadSample(train);
 
         // 貨物積載中は実走行マス数をインクリメント（正当な距離運賃を計算するため）
         if ((train.cargoLoad ?? 0) > 0) {
@@ -1144,11 +1145,24 @@ export class TrainManager {
               }
 
               // Phase3 ②: 途中駅での分割（切り離し）判定
-              const splitConfig = schedule?.splitConfig;
-              const splitCheck = (!isYard && !isTooLong) ? validateSplitConfig(train.carCount, splitConfig) : { valid: false };
+              let activeSplitConfig = arrival.splitConfig || schedule?.splitConfig;
+              if (activeSplitConfig && activeSplitConfig.enabled && train.carCount >= 2) {
+                // 編成両数に合わせて前後両数を整合調整（両数不一致による切り離し不発を防止）
+                if (activeSplitConfig.frontCars + activeSplitConfig.rearCars !== train.carCount) {
+                  const fCars = Math.max(1, Math.min(train.carCount - 1, activeSplitConfig.frontCars));
+                  activeSplitConfig = {
+                    ...activeSplitConfig,
+                    frontCars: fCars,
+                    rearCars: train.carCount - fCars
+                  };
+                }
+              }
+              const splitCheck = (!isYard && !isTooLong && train.carCount >= 2)
+                ? validateSplitConfig(train.carCount, activeSplitConfig)
+                : { valid: false };
 
-              if (splitCheck.valid && splitConfig) {
-                const rearTrain = this.performSplit(train, splitConfig, curTileData);
+              if (splitCheck.valid && activeSplitConfig) {
+                const rearTrain = this.performSplit(train, activeSplitConfig, curTileData);
                 trainsPendingAdd.push(rearTrain);
               } else {
                 // Phase3 ①: 併合（連結）判定。同一ホームに既に停車中の先行編成があれば合体する。
@@ -1222,8 +1236,13 @@ export class TrainManager {
         }
       }
 
-      // 次サブステップのATS・閉塞判定のため、先頭車位置を更新
-      this.updateTrainFrontPosition(train);
+      // 次サブステップのATS・閉塞判定および滑らかな車体姿勢同期のため、先頭車位置と走行履歴を即座に更新
+      // 高速・極超高速（720倍速）であっても中間の全カーブ・全ポイント軌跡を細かく記録し、車両折れ曲がり・脱線表示崩れを防止
+      for (const t of this.trains) {
+        if (!trainsPendingRemoval.includes(t.id)) {
+          this.recordCurrentHeadSample(t);
+        }
+      }
     }
   } // サブステップループ終了
 
@@ -1369,7 +1388,7 @@ export class TrainManager {
       hist.push({ pos: pos.clone(), yaw, pitch, cant, dist: last.dist + segDist, layer });
     }
 
-    const maxNeeded = (train.carCount - 1) * ModelFactory.CAR_SPACING + 4; // 安全マージン込み
+    const maxNeeded = (train.carCount - 1) * ModelFactory.CAR_SPACING + 15; // 安全マージンを15（約8マス分）に拡張
     const newestDist = hist[hist.length - 1].dist;
     while (hist.length > 2 && (newestDist - hist[1].dist) > maxNeeded) {
       hist.shift();
@@ -1478,11 +1497,38 @@ export class TrainManager {
   }
 
   /**
+   * 全アクティブ列車の在線占有タイル（occupiedTiles）を即時再計算する。
+   * 線路・駅の撤去直後や仮置き・本設置の判定直前に呼び出し、
+   * ポーズ中（一時停止中）であっても在線状態を常に最新・正確に保つ。
+   */
+  public updateOccupancyNow(): void {
+    for (const train of this.trains) {
+      train.occupiedTiles = this.calculateOccupiedTiles(train);
+    }
+  }
+
+  /**
    * ⑤ 指定座標・階層が運行中列車のいずれかによって占有されているかを判定
    * （走行中・停車中列車の足元の線路・駅の破壊を防止する安全ガード）
    */
   public isTileOccupiedByTrain(x: number, z: number, layer: GridLayer): boolean {
+    // 対象タイルが既に更地（empty）の場合、古いキャッシュに惑わされないよう
+    // 実際に列車車両の物理位置が至近距離（0.8マス以内）にあるか検証
+    const tile = this.worldMap.getTile(x, z, layer);
+    const isEmptyTile = !tile || tile.type === 'empty';
+
     for (const train of this.trains) {
+      if (isEmptyTile) {
+        // 更地タイルの場合: 列車車両の実際の物理位置がこのマスの近くにあるか厳格にチェック
+        const isPhysicallyNear = train.cars.some(car => {
+          const distSq = (car.position.x - x * WorldMap.TILE_SIZE) ** 2 +
+                         (car.position.z - z * WorldMap.TILE_SIZE) ** 2;
+          return distSq < (0.8 * WorldMap.TILE_SIZE) ** 2;
+        });
+        if (isPhysicallyNear) return true;
+        continue;
+      }
+
       if (train.occupiedTiles && train.occupiedTiles.some(t => t.x === x && t.z === z && t.layer === layer)) {
         return true;
       }

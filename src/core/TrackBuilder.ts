@@ -195,7 +195,7 @@ export class TrackBuilder {
       const baseH = layerToHeight(seg.layer);
       let mesh: THREE.Group;
       if (seg.curveDir) {
-        mesh = ModelFactory.createCurveTrackSegment(seg.curveDir, isElevated, baseH);
+        mesh = ModelFactory.createCurveTrackSegment(seg.curveDir, isElevated, baseH, isTunnel);
       } else if (isTunnel) {
         mesh = ModelFactory.createTunnelTrack(seg.rotation);
       } else if (isElevated) {

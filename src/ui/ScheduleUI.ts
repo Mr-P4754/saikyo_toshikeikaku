@@ -143,6 +143,30 @@ export class ScheduleUI {
         background: rgba(16, 185, 129, 0.25); border-color: #10b981; color: #34d399;
         box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
       }
+      .sc-btn-split {
+        background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #94a3b8; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;
+        font-weight: bold; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 4px;
+      }
+      .sc-btn-split:hover { background: rgba(245, 158, 11, 0.15); color: #fff; }
+      .sc-btn-split.active {
+        background: rgba(245, 158, 11, 0.25); border-color: #f59e0b; color: #fbbf24;
+        box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+      }
+      .sc-split-settings {
+        margin-top: 8px; padding: 8px 10px; background: rgba(245, 158, 11, 0.1);
+        border: 1px dashed rgba(245, 158, 11, 0.4); border-radius: 6px;
+        display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap;
+      }
+      .sc-split-settings input[type="number"] {
+        background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(245, 158, 11, 0.5);
+        color: #fff; padding: 3px 6px; border-radius: 4px; font-size: 13px; font-family: monospace;
+        width: 48px; text-align: center;
+      }
+      .sc-split-settings label { color: #fbbf24; font-weight: bold; }
+      .tl-dep-pin-split {
+        border-right: 2px dashed #f59e0b !important;
+      }
       .sc-btn-copy, .sc-btn-del {
         background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);
         color: #e2e8f0; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
@@ -203,6 +227,7 @@ export class ScheduleUI {
     schedule.departures = schedule.departures || [];
     schedule.timeZones = schedule.timeZones || [];
     schedule.reverseDepartures = schedule.reverseDepartures || [];
+    schedule.splitDepartures = schedule.splitDepartures || [];
 
     this.container.innerHTML = `
       <div class="sc-header">
@@ -219,7 +244,7 @@ export class ScheduleUI {
           <div class="timeline-ruler" id="tl-ruler" style="width: ${1440 * this.PIXELS_PER_MIN}px;">
             ${this.generateRuler()}
             ${this.generateZones(schedule.timeZones)}
-            ${this.generateDepartures(schedule.departures, schedule.reverseDepartures)}
+            ${this.generateDepartures(schedule.departures, schedule.reverseDepartures, schedule.splitDepartures)}
           </div>
         </div>
 
@@ -244,13 +269,16 @@ export class ScheduleUI {
     return html;
   }
 
-  private generateDepartures(deps: number[], reverseDeps: number[] = []): string {
+  private generateDepartures(deps: number[], reverseDeps: number[] = [], splitDeps: number[] = []): string {
     return deps.map(m => {
       const isRev = reverseDeps.includes(m);
+      const isSplit = splitDeps.includes(m);
       const revClass = isRev ? ' tl-dep-pin-reverse' : '';
+      const splitClass = isSplit ? ' tl-dep-pin-split' : '';
       const revTitle = isRev ? ' (折り返し)' : '';
+      const splitTitle = isSplit ? ' [✂️分割]' : '';
       return `
-        <div class="tl-dep-pin${revClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} 発車${revTitle}"></div>
+        <div class="tl-dep-pin${revClass}${splitClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} 発車${revTitle}${splitTitle}"></div>
       `;
     }).join('');
   }
@@ -258,6 +286,8 @@ export class ScheduleUI {
   private generateZones(zones: TimeZoneRule[]): string {
     let html = '';
     for (const z of zones) {
+      const splitTitle = z.isSplit ? ` [✂️分割 ${z.splitFrontCars || 2}+${z.splitRearCars || 2}両]` : '';
+      const splitLabel = z.isSplit ? ` [✂️${z.splitFrontCars || 2}+${z.splitRearCars || 2}]` : '';
       if (z.mode === 'pattern') {
         // パターンダイヤ: 設定された発車間隔・基準分に基づいてピンを描画
         const revClass = z.isReverse ? ' tl-dep-pin-reverse' : '';
@@ -273,7 +303,7 @@ export class ScheduleUI {
 
         const deps = getPatternDepartureMinutes(z);
         for (const m of deps) {
-          html += `<div class="tl-dep-pin-pattern${revClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} パターン発車 (${intLabel})${revTitle}"></div>`;
+          html += `<div class="tl-dep-pin-pattern${revClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} パターン発車 (${intLabel})${revTitle}${splitTitle}"></div>`;
         }
       } else {
         // 通過 または 〇分停車: 時間帯の帯を描画
@@ -285,8 +315,8 @@ export class ScheduleUI {
         const label = z.mode === 'pass' ? '通過' : `${z.waitMinutes || 1}分停車`;
         const revLabel = z.isReverse ? ' [折]' : '';
         html += `
-          <div class="tl-zone ${cls}" style="left:${z.startMin * this.PIXELS_PER_MIN}px; width:${w}px;" title="${this.formatTime(z.startMin)}～${this.formatTime(z.endMin)}: ${label}${revLabel}">
-            <span>${label}${revLabel}</span>
+          <div class="tl-zone ${cls}" style="left:${z.startMin * this.PIXELS_PER_MIN}px; width:${w}px;" title="${this.formatTime(z.startMin)}～${this.formatTime(z.endMin)}: ${label}${revLabel}${splitTitle}">
+            <span>${label}${revLabel}${splitLabel}</span>
           </div>
         `;
       }
@@ -303,6 +333,7 @@ export class ScheduleUI {
 
   private renderCards(schedule: StationSchedule): string {
     schedule.reverseDepartures = schedule.reverseDepartures || [];
+    schedule.splitDepartures = schedule.splitDepartures || [];
     // タイムライン順（時刻順）に並べるための統合配列を作成
     const items: Array<{ type: 'dep'|'zone', min: number, origIdx: number, data: TimeZoneRule | null }> = [];
     
@@ -320,7 +351,11 @@ export class ScheduleUI {
     items.forEach((item, displayOrder) => {
       if (item.type === 'dep') {
         const isRev = schedule.reverseDepartures!.includes(item.min);
-        html += this.buildCardHtml('dep', item.origIdx, null, item.min, 0, 'dep', 0, 0, 60, isRev, displayOrder + 1);
+        const isSplit = schedule.splitDepartures!.includes(item.min);
+        const fCars = schedule.splitConfig?.frontCars ?? 2;
+        const rCars = schedule.splitConfig?.rearCars ?? 2;
+        const rRev = !!schedule.splitConfig?.rearReverses;
+        html += this.buildCardHtml('dep', item.origIdx, null, item.min, 0, 'dep', 0, 0, 60, isRev, displayOrder + 1, isSplit, fCars, rCars, rRev);
       } else if (item.data) {
         html += this.buildCardHtml(
           'zone',
@@ -333,7 +368,11 @@ export class ScheduleUI {
           item.data.patternMinute ?? 0,
           item.data.patternIntervalMinutes ?? 60,
           !!item.data.isReverse,
-          displayOrder + 1
+          displayOrder + 1,
+          !!item.data.isSplit,
+          item.data.splitFrontCars ?? 2,
+          item.data.splitRearCars ?? 2,
+          !!item.data.splitRearReverses
         );
       }
     });
@@ -356,7 +395,11 @@ export class ScheduleUI {
     patternMinute: number,
     patternIntervalMinutes: number,
     isReverse: boolean,
-    order: number
+    order: number,
+    isSplit: boolean = false,
+    splitFrontCars: number = 2,
+    splitRearCars: number = 2,
+    splitRearReverses: boolean = false
   ): string {
     const dataAttr = dataType === 'dep' ? `data-type="dep" data-index="${origIdx}"` : `data-type="zone" data-id="${id}"`;
     const intervalHours = Math.floor((patternIntervalMinutes || 60) / 60);
@@ -374,6 +417,9 @@ export class ScheduleUI {
           <div class="sc-card-actions">
             <button class="sc-btn-reverse ${isReverse ? 'active' : ''}" title="この発車時刻・時間帯で発車時に進行方向を折り返します">
               🔄 折り返し: ${isReverse ? 'ON' : 'OFF'}
+            </button>
+            <button class="sc-btn-split ${isSplit ? 'active' : ''}" title="この発車・停車時に列車を前後に分割（切り離し）します">
+              ✂️ 分割: ${isSplit ? 'ON' : 'OFF'}
             </button>
             <button class="sc-btn-copy">コピー</button>
             <button class="sc-btn-del">削除</button>
@@ -402,6 +448,24 @@ export class ScheduleUI {
               <span style="color:#94a3b8; margin-left:6px;">(基準: 毎時</span>
               <input type="number" class="sc-pattern-val" min="0" max="59" value="${patternMinute}" style="width:45px; text-align:center;">
               <span style="color:#94a3b8;">分発)</span>
+            </div>
+          ` : ''}
+          ${isSplit ? `
+            <div class="sc-split-settings">
+              <label>✂️ 分割設定:</label>
+              <span style="color:#cbd5e1; font-weight:bold;">対象編成:</span>
+              <select class="sc-split-total-cars" style="background:rgba(15,23,42,0.85); border:1px solid #f59e0b; color:#fff; border-radius:4px; padding:2px 6px; font-size:12px; font-weight:bold; cursor:pointer;">
+                ${[2,3,4,5,6,7,8,9,10].map(c => `<option value="${c}" ${c === (splitFrontCars + splitRearCars) ? 'selected' : ''}>${c}両編成</option>`).join('')}
+              </select>
+              <span style="color:#94a3b8; margin:0 2px;">➔</span>
+              <span style="color:#e2e8f0;">前</span>
+              <input type="number" class="sc-split-front" min="1" max="${Math.max(1, (splitFrontCars + splitRearCars) - 1)}" value="${splitFrontCars}">
+              <span style="color:#e2e8f0;">両 ＋ 後 <b class="sc-split-rear-val" style="color:#fbbf24; font-size:13px; font-family:monospace; padding:0 3px;">${splitRearCars}</b> 両</span>
+              <span style="color:#94a3b8; font-size:11px;">(計 ${splitFrontCars + splitRearCars}両)</span>
+              <label style="margin-left:8px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; font-weight:normal; color:#cbd5e1;">
+                <input type="checkbox" class="sc-split-rear-rev" ${splitRearReverses ? 'checked' : ''}>
+                後編成を折り返し
+              </label>
             </div>
           ` : ''}
         </div>
@@ -451,17 +515,115 @@ export class ScheduleUI {
         this.notifyChanged();
       });
 
+      // 分割ボタンのトグル
+      card.querySelector('.sc-btn-split')?.addEventListener('click', () => {
+        schedule.splitDepartures = schedule.splitDepartures || [];
+        if (type === 'dep') {
+          const min = schedule.departures[origIdx];
+          const spIdx = schedule.splitDepartures.indexOf(min);
+          if (spIdx >= 0) {
+            schedule.splitDepartures.splice(spIdx, 1);
+          } else {
+            schedule.splitDepartures.push(min);
+          }
+          if (!schedule.splitConfig) {
+            schedule.splitConfig = {
+              enabled: true,
+              frontCars: 2,
+              rearCars: 2,
+              frontDeparture: { mode: 'timer' },
+              rearDeparture: { mode: 'timer' },
+              rearReverses: false
+            };
+          } else {
+            schedule.splitConfig.enabled = schedule.splitDepartures.length > 0;
+          }
+        } else {
+          const zone = schedule.timeZones.find(z => z.id === origId);
+          if (zone) {
+            zone.isSplit = !zone.isSplit;
+            if (zone.splitFrontCars === undefined) zone.splitFrontCars = 2;
+            if (zone.splitRearCars === undefined) zone.splitRearCars = 2;
+          }
+        }
+        this.notifyChanged();
+      });
+
+      // 分割設定: 対象編成両数セレクトの変更
+      card.querySelector('.sc-split-total-cars')?.addEventListener('change', (e) => {
+        const total = parseInt((e.target as HTMLSelectElement).value) || 4;
+        const front = Math.max(1, Math.min(total - 1, Math.floor(total / 2)));
+        const rear = total - front;
+
+        if (type === 'dep') {
+          if (!schedule.splitConfig) {
+            schedule.splitConfig = { enabled: true, frontCars: front, rearCars: rear, frontDeparture: { mode: 'timer' }, rearDeparture: { mode: 'timer' }, rearReverses: false };
+          } else {
+            schedule.splitConfig.frontCars = front;
+            schedule.splitConfig.rearCars = rear;
+          }
+        } else {
+          const zone = schedule.timeZones.find(z => z.id === origId);
+          if (zone) {
+            zone.splitFrontCars = front;
+            zone.splitRearCars = rear;
+          }
+        }
+        this.notifyChanged();
+      });
+
+      // 分割設定: 前両数入力の変更（自動で後両数が連動して合計整合を保証）
+      card.querySelector('.sc-split-front')?.addEventListener('change', (e) => {
+        const totalSelect = card.querySelector<HTMLSelectElement>('.sc-split-total-cars');
+        const total = parseInt(totalSelect?.value || '4') || 4;
+        let front = parseInt((e.target as HTMLInputElement).value) || 1;
+        front = Math.max(1, Math.min(total - 1, front));
+        const rear = total - front;
+
+        if (type === 'dep') {
+          if (!schedule.splitConfig) {
+            schedule.splitConfig = { enabled: true, frontCars: front, rearCars: rear, frontDeparture: { mode: 'timer' }, rearDeparture: { mode: 'timer' }, rearReverses: false };
+          } else {
+            schedule.splitConfig.frontCars = front;
+            schedule.splitConfig.rearCars = rear;
+          }
+        } else {
+          const zone = schedule.timeZones.find(z => z.id === origId);
+          if (zone) {
+            zone.splitFrontCars = front;
+            zone.splitRearCars = rear;
+          }
+        }
+        this.notifyChanged();
+      });
+
+      card.querySelector('.sc-split-rear-rev')?.addEventListener('change', (e) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        if (type === 'dep') {
+          if (!schedule.splitConfig) schedule.splitConfig = { enabled: true, frontCars: 2, rearCars: 2, frontDeparture: { mode: 'timer' }, rearDeparture: { mode: 'timer' }, rearReverses: false };
+          schedule.splitConfig.rearReverses = checked;
+        } else {
+          const zone = schedule.timeZones.find(z => z.id === origId);
+          if (zone) zone.splitRearReverses = checked;
+        }
+        this.notifyChanged();
+      });
+
       // 種類（発車・パターン・停車・通過）の切り替え
       card.querySelector('.sc-type-sel')?.addEventListener('change', (e) => {
         const newMode = (e.target as HTMLSelectElement).value;
         schedule.reverseDepartures = schedule.reverseDepartures || [];
+        schedule.splitDepartures = schedule.splitDepartures || [];
 
         if (type === 'dep') {
           const min = schedule.departures[origIdx];
           const wasReverse = schedule.reverseDepartures.includes(min);
+          const wasSplit = schedule.splitDepartures.includes(min);
           schedule.departures.splice(origIdx, 1); // ピンから削除
           const revIdx = schedule.reverseDepartures.indexOf(min);
           if (revIdx >= 0) schedule.reverseDepartures.splice(revIdx, 1);
+          const spIdx = schedule.splitDepartures.indexOf(min);
+          if (spIdx >= 0) schedule.splitDepartures.splice(spIdx, 1);
 
           if (newMode === 'pass' || newMode === 'stop' || newMode === 'pattern') {
             schedule.timeZones.push({
@@ -472,7 +634,11 @@ export class ScheduleUI {
               waitMinutes: newMode === 'stop' ? 2 : undefined,
               patternMinute: newMode === 'pattern' ? min % 60 : undefined,
               patternIntervalMinutes: newMode === 'pattern' ? 60 : undefined,
-              isReverse: wasReverse
+              isReverse: wasReverse,
+              isSplit: wasSplit,
+              splitFrontCars: schedule.splitConfig?.frontCars ?? 2,
+              splitRearCars: schedule.splitConfig?.rearCars ?? 2,
+              splitRearReverses: !!schedule.splitConfig?.rearReverses
             });
           }
         } else {
@@ -481,10 +647,24 @@ export class ScheduleUI {
           const zone = schedule.timeZones[zoneIdx];
           if (newMode === 'dep') {
             const wasReverse = !!zone.isReverse;
+            const wasSplit = !!zone.isSplit;
             schedule.timeZones.splice(zoneIdx, 1); // ゾーンから削除
             schedule.departures.push(zone.startMin);
             if (wasReverse && !schedule.reverseDepartures.includes(zone.startMin)) {
               schedule.reverseDepartures.push(zone.startMin);
+            }
+            if (wasSplit && !schedule.splitDepartures.includes(zone.startMin)) {
+              schedule.splitDepartures.push(zone.startMin);
+              if (!schedule.splitConfig) {
+                schedule.splitConfig = {
+                  enabled: true,
+                  frontCars: zone.splitFrontCars ?? 2,
+                  rearCars: zone.splitRearCars ?? 2,
+                  frontDeparture: { mode: 'timer' },
+                  rearDeparture: { mode: 'timer' },
+                  rearReverses: !!zone.splitRearReverses
+                };
+              }
             }
           } else {
             zone.mode = newMode as 'pass' | 'stop' | 'pattern';
@@ -506,14 +686,20 @@ export class ScheduleUI {
         const [h, m] = val.split(':').map(Number);
         const mins = h * 60 + m;
         schedule.reverseDepartures = schedule.reverseDepartures || [];
+        schedule.splitDepartures = schedule.splitDepartures || [];
 
         if (type === 'dep') {
           const oldMin = schedule.departures[origIdx];
           const wasRev = schedule.reverseDepartures.includes(oldMin);
+          const wasSp = schedule.splitDepartures.includes(oldMin);
           schedule.departures[origIdx] = mins;
           if (wasRev) {
             schedule.reverseDepartures = schedule.reverseDepartures.filter(x => x !== oldMin);
             schedule.reverseDepartures.push(mins);
+          }
+          if (wasSp) {
+            schedule.splitDepartures = schedule.splitDepartures.filter(x => x !== oldMin);
+            schedule.splitDepartures.push(mins);
           }
           schedule.departures.sort((a,b)=>a-b);
         } else {
@@ -580,12 +766,15 @@ export class ScheduleUI {
       // コピーボタン
       card.querySelector('.sc-btn-copy')?.addEventListener('click', () => {
         schedule.reverseDepartures = schedule.reverseDepartures || [];
+        schedule.splitDepartures = schedule.splitDepartures || [];
         if (type === 'dep') {
           const oldMin = schedule.departures[origIdx];
           const isRev = schedule.reverseDepartures.includes(oldMin);
+          const isSp = schedule.splitDepartures.includes(oldMin);
           const newMin = Math.min(1439, oldMin + 10);
           schedule.departures.push(newMin);
           if (isRev) schedule.reverseDepartures.push(newMin);
+          if (isSp) schedule.splitDepartures.push(newMin);
           schedule.departures.sort((a,b)=>a-b);
         } else {
           const zone = schedule.timeZones.find(z => z.id === origId);
@@ -599,10 +788,12 @@ export class ScheduleUI {
       // 削除ボタン
       card.querySelector('.sc-btn-del')?.addEventListener('click', () => {
         schedule.reverseDepartures = schedule.reverseDepartures || [];
+        schedule.splitDepartures = schedule.splitDepartures || [];
         if (type === 'dep') {
           const oldMin = schedule.departures[origIdx];
           schedule.departures.splice(origIdx, 1);
           schedule.reverseDepartures = schedule.reverseDepartures.filter(x => x !== oldMin);
+          schedule.splitDepartures = schedule.splitDepartures.filter(x => x !== oldMin);
         } else {
           schedule.timeZones = schedule.timeZones.filter(z => z.id !== origId);
         }

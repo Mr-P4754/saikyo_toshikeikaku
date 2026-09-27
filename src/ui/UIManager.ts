@@ -227,6 +227,7 @@ export class UIManager {
   private btnStLenPlus = document.getElementById('btn-st-len-plus');
   private stLenDisplay = document.getElementById('st-len-display');
   private stationSideBtn = document.getElementById('btn-station-side-toggle');
+  private btnStationRotate = document.getElementById('btn-station-rotate-toggle');
   private selectedStationLength: number = 2; // 1〜10両対応
 
   // ② 開発テスト用: 資金無限モードトリガー
@@ -500,6 +501,7 @@ export class UIManager {
     this.switchSideBtn.addEventListener('click', () => this.onToggleSwitchSide());
     this.stationSideBtn?.addEventListener('click', () => this.onToggleStationSide());
     this.stationSideHintBtn?.addEventListener('click', () => this.onToggleStationSide());
+    this.btnStationRotate?.addEventListener('click', () => this.onRotatePlacement());
 
     // ② 開発テスト用 資金無限モード切替
     this.fundsCardBtn?.addEventListener('click', () => this.onToggleInfiniteFunds());
@@ -1235,6 +1237,15 @@ export class UIManager {
   }
 
   /**
+   * 駅設置用向き回転ボタンのテキスト表示を更新
+   */
+  public setStationRotationText(axisLabel: string) {
+    if (this.btnStationRotate) {
+      this.btnStationRotate.textContent = `🔄 向き: ${axisLabel}`;
+    }
+  }
+
+  /**
    * 全7階層スライサーUIのアクティブボタン表示更新
    */
   public setFloorActive(layer: GridLayer | 'all') {
@@ -1599,6 +1610,9 @@ export class UIManager {
     this.inspectActions.innerHTML = '';
     this.inspectFinancialBox.classList.add('hidden');
     this.inspectFinancialBox.innerHTML = '';
+    if (this.inspectRenameRow) {
+      this.inspectRenameRow.classList.add('hidden');
+    }
 
     if (switchHub) {
       const isStraight = (switchHub.switchState !== 'diverge');

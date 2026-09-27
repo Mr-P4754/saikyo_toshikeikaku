@@ -1,10 +1,11 @@
-import { StationSchedule, StationActionMode, TimeZoneRule, isMinuteInZone } from '../simulation/WorldMap';
+import { StationSchedule, StationActionMode, TimeZoneRule, isMinuteInZone, SplitConfig, createDefaultSplitConfig } from '../simulation/WorldMap';
 export { isMinuteInZone };
 
 export interface ArrivalDecision {
   mode: StationActionMode;
   requiredStopMinutes: number;
   isReverse?: boolean;
+  splitConfig?: SplitConfig;
 }
 
 export interface DepartureEvaluation {
@@ -28,8 +29,25 @@ export function resolveArrival(schedule: StationSchedule | undefined, hour: numb
   // 現在時刻に合致するすべてのゾーンを抽出
   const activeZones = (schedule.timeZones || []).filter(z => isMinuteInZone(currentMin, z.startMin, z.endMin));
 
+  // 分割（切り離し）設定の判定
+  let splitConfig: SplitConfig | undefined = undefined;
+  const isPinSplit = !!(schedule.splitDepartures && schedule.splitDepartures.some(sd => Math.abs(sd - currentMin) <= 15));
+  const matchedSplitZone = activeZones.find(z => z.isSplit);
+
+  if (matchedSplitZone) {
+    splitConfig = createDefaultSplitConfig(
+      matchedSplitZone.splitFrontCars || 2,
+      matchedSplitZone.splitRearCars || 2,
+      !!matchedSplitZone.splitRearReverses
+    );
+  } else if (isPinSplit) {
+    splitConfig = schedule.splitConfig || createDefaultSplitConfig(2, 2, false);
+  } else if (schedule.splitConfig && schedule.splitConfig.enabled) {
+    splitConfig = schedule.splitConfig;
+  }
+
   if (activeZones.length === 0) {
-    return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse };
+    return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse, splitConfig };
   }
 
   // 1. 通過ゾーンがあれば通過優先
@@ -42,16 +60,16 @@ export function resolveArrival(schedule: StationSchedule | undefined, hour: numb
   const patternZones = activeZones.filter(z => z.mode === 'pattern');
   if (patternZones.length > 0) {
     const anyReverse = patternZones.some(z => z.isReverse);
-    return { mode: 'wait', requiredStopMinutes: 0, isReverse: anyReverse || defaultReverse };
+    return { mode: 'wait', requiredStopMinutes: 0, isReverse: anyReverse || defaultReverse, splitConfig };
   }
 
   // 3. 停車時間指定ゾーン
   const stopZone = activeZones.find(z => z.mode === 'stop');
   if (stopZone) {
-    return { mode: 'stop', requiredStopMinutes: stopZone.waitMinutes || 1, isReverse: !!stopZone.isReverse || defaultReverse };
+    return { mode: 'stop', requiredStopMinutes: stopZone.waitMinutes || 1, isReverse: !!stopZone.isReverse || defaultReverse, splitConfig };
   }
 
-  return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse };
+  return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse, splitConfig };
 }
 
 /**

@@ -111,6 +111,10 @@ export interface TimeZoneRule {
   patternMinute?: number; // pattern時の基準分 (0-59)
   patternIntervalMinutes?: number; // pattern時の発車間隔（分単位、例: 15, 20, 30, 60, 120。デフォルト60）
   isReverse?: boolean;   // この時間帯での発車時に折り返すか
+  isSplit?: boolean;     // この時間帯での到着時に編成を分割するか
+  splitFrontCars?: number; // 分割時の前編成両数（デフォルト2）
+  splitRearCars?: number;  // 分割時の後編成両数（デフォルト2）
+  splitRearReverses?: boolean; // 分割後の後発編成が折り返すか
 }
 
 /** 発車ルール（パターンダイヤ／特定時刻発／即時＝停車時間経過後・分割編成等の互換用） */
@@ -134,6 +138,17 @@ export interface SplitConfig {
   rearReverses: boolean; // 後発編成が折り返し（逆方向発車）するか
 }
 
+export function createDefaultSplitConfig(frontCars: number = 2, rearCars: number = 2, rearReverses: boolean = false): SplitConfig {
+  return {
+    enabled: true,
+    frontCars,
+    rearCars,
+    frontDeparture: { mode: 'timer' },
+    rearDeparture: { mode: 'timer' },
+    rearReverses
+  };
+}
+
 export interface StationSchedule {
   // ① 1分単位の発車時刻ピン（0-1439の配列）
   departures: number[];
@@ -141,7 +156,9 @@ export interface StationSchedule {
   timeZones: TimeZoneRule[];
   // ③ 折り返し指定された発車ピン時刻(分)の配列
   reverseDepartures?: number[];
-  // ④ 折り返し・分割設定（既存機能の互換維持）
+  // ④ 分割指定された発車ピン時刻(分)の配列
+  splitDepartures?: number[];
+  // ⑤ 折り返し・分割設定（既存機能の互換維持）
   reverseDelayMinutes?: number; 
   splitConfig?: SplitConfig;
 }
@@ -790,7 +807,8 @@ export class WorldMap {
     const elevY = this.getTrackElevationOffset(x, z, layer);
     tile.elevationOffset = elevY;
 
-    const mesh = ModelFactory.createCurveTrackSegment(curveDir, isElevated, baseH);
+    const isTunnel = this.isTunnelSection(x, z, layer);
+    const mesh = ModelFactory.createCurveTrackSegment(curveDir, isElevated, baseH, isTunnel);
     mesh.position.set(x * WorldMap.TILE_SIZE, baseH + elevY, z * WorldMap.TILE_SIZE);
     mesh.visible = (layer === this.activeLayer);
     this.scene.add(mesh);
@@ -947,7 +965,8 @@ export class WorldMap {
     const elevY = this.getTrackElevationOffset(x, z, layer);
     tile.elevationOffset = elevY;
 
-    const mesh = ModelFactory.createSwitchHub(forward, false, isElevated, branchSide, baseH);
+    const isTunnel = this.isTunnelSection(x, z, layer);
+    const mesh = ModelFactory.createSwitchHub(forward, false, isElevated, branchSide, baseH, isTunnel);
     mesh.position.set(x * WorldMap.TILE_SIZE, baseH + elevY, z * WorldMap.TILE_SIZE);
     mesh.visible = (layer === this.activeLayer);
     this.scene.add(mesh);
@@ -997,7 +1016,8 @@ export class WorldMap {
       const elevY = this.getTrackElevationOffset(p.x, p.z, layer);
       t.elevationOffset = elevY;
 
-      const mesh = ModelFactory.createScissorsCrossingTile(along, role as 0 | 1 | 2 | 3, isElevated, 'straight', baseH);
+      const isTunnel = this.isTunnelSection(p.x, p.z, layer);
+      const mesh = ModelFactory.createScissorsCrossingTile(along, role as 0 | 1 | 2 | 3, isElevated, 'straight', baseH, isTunnel);
       mesh.position.set(p.x * WorldMap.TILE_SIZE, baseH + elevY, p.z * WorldMap.TILE_SIZE);
       mesh.visible = (layer === this.activeLayer);
       this.scene.add(mesh);
@@ -1060,7 +1080,8 @@ export class WorldMap {
       const baseH = layerToHeight(tileLayer);
       const elevY = this.getTrackElevationOffset(p.x, p.z, tileLayer);
       t.elevationOffset = elevY;
-      const mesh = ModelFactory.createScissorsCrossingTile(along, role as 0 | 1 | 2 | 3, isElevated, targetState, baseH);
+      const isTunnel = this.isTunnelSection(p.x, p.z, tileLayer);
+      const mesh = ModelFactory.createScissorsCrossingTile(along, role as 0 | 1 | 2 | 3, isElevated, targetState, baseH, isTunnel);
       mesh.position.set(p.x * WorldMap.TILE_SIZE, baseH + elevY, p.z * WorldMap.TILE_SIZE);
       mesh.visible = (tileLayer === this.activeLayer);
       this.scene.add(mesh);
@@ -1098,7 +1119,8 @@ export class WorldMap {
     const baseH = layerToHeight(tileLayer);
     const elevY = this.getTrackElevationOffset(tile.x, tile.z, tileLayer);
     tile.elevationOffset = elevY;
-    const mesh = ModelFactory.createSwitchHub(tile.rotation, tile.switchState === 'diverge', isElevated, branchSide, baseH);
+    const isTunnel = this.isTunnelSection(tile.x, tile.z, tileLayer);
+    const mesh = ModelFactory.createSwitchHub(tile.rotation, tile.switchState === 'diverge', isElevated, branchSide, baseH, isTunnel);
     mesh.position.set(tile.x * WorldMap.TILE_SIZE, baseH + elevY, tile.z * WorldMap.TILE_SIZE);
     mesh.visible = (tileLayer === this.activeLayer);
     this.scene.add(mesh);
@@ -1993,7 +2015,8 @@ export class WorldMap {
     const baseH = layerToHeight(tileLayer);
     const elevY = this.getTrackElevationOffset(tile.x, tile.z, tileLayer);
     tile.elevationOffset = elevY;
-    const mesh = ModelFactory.createSwitchHub(tile.rotation, tile.switchState === 'diverge', isElevated, branchSide, baseH);
+    const isTunnel = this.isTunnelSection(tile.x, tile.z, tileLayer);
+    const mesh = ModelFactory.createSwitchHub(tile.rotation, tile.switchState === 'diverge', isElevated, branchSide, baseH, isTunnel);
     mesh.position.set(tile.x * WorldMap.TILE_SIZE, baseH + elevY, tile.z * WorldMap.TILE_SIZE);
     mesh.visible = (tileLayer === this.activeLayer);
     this.scene.add(mesh);
@@ -2029,7 +2052,11 @@ export class WorldMap {
       const tz = originZ + stepZ * i;
       if (!this.isInBounds(tx, tz)) return false;
       const t = this.getTile(tx, tz, layer);
-      if (t && this.isPermanentTrackOrStation(tx, tz, layer)) return false;
+      if (t && t.type !== 'empty') {
+        // 直線線路（地上・高架）かつ向きが一致していればアタッチ設置可能
+        const isCompatibleTrack = (t.type === 'rail_ground' || t.type === 'rail_elevated') && t.rotation === rot;
+        if (!isCompatibleTrack) return false;
+      }
       const waterCheck = this.canPlaceAtWater(tx, tz, layer);
       if (!waterCheck.allowed) return false;
     }
@@ -2241,7 +2268,55 @@ export class WorldMap {
         const sz = st.z;
         const stLayer = (st.layer ?? layer) as GridLayer;
         this.stationManager.removeTileFromPlatform(sx, sz, stLayer);
-        this.resetTileData(st);
+
+        // 【ユーザー要件③】駅舎・ホーム・コンテナ等は線路に付随するオプションパーツとして扱うため、
+        // 駅撤去時は線路を残して元の直線線路（地上線路または高架線路）に復元する！
+        const isElevated = prevType.includes('elevated') || stLayer >= 2;
+        const restoreTrackType: TileType = isElevated ? 'rail_elevated' : 'rail_ground';
+
+        this.removeTileMesh(st);
+        st.type = restoreTrackType;
+        st.rotation = rot;
+        st.level = isElevated ? LEVEL_ELEVATED : LEVEL_GROUND;
+        st.stationPassengers = 0;
+        st.curveDir = undefined;
+        st.switchState = 'straight';
+        st.groupOrigin = undefined;
+        st.crossingRole = undefined;
+        st.crossingState = undefined;
+        st.crossingRoadAxis = undefined;
+        st.slopeReversed = undefined;
+        st.slopePart = undefined;
+        st.stationGroupId = undefined;
+        st.stationPart = undefined;
+        st.stationPlatformSide = undefined;
+        st.stationSchedule = undefined;
+        st.switchSchedule = undefined;
+        st.stationName = undefined;
+        st.dailyPassengers = undefined;
+        st.totalPassengers = undefined;
+        st.totalRevenue = undefined;
+        st.stationMaintenance = undefined;
+        st.stationNetProfit = undefined;
+        st.stationTargetLength = undefined;
+        st.cargoContainers = undefined;
+        st.isCargoYard = undefined;
+
+        // 線路メッシュを再生成
+        const baseH = layerToHeight(stLayer);
+        const elevY = this.getTrackElevationOffset(sx, sz, stLayer);
+        st.elevationOffset = elevY;
+        const isTunnel = this.isTunnelSection(sx, sz, stLayer);
+        const trackMesh = isTunnel
+          ? ModelFactory.createTunnelTrack(rot)
+          : (isElevated
+            ? ModelFactory.createElevatedTrack(rot, WorldMap.shouldShowPier(sx, sz, rot), baseH)
+            : ModelFactory.createGroundTrack(rot, false));
+        trackMesh.position.set(sx * WorldMap.TILE_SIZE, baseH + elevY, sz * WorldMap.TILE_SIZE);
+        trackMesh.visible = (stLayer === this.activeLayer);
+        this.scene.add(trackMesh);
+        st.mesh = trackMesh;
+
         if (prevType.startsWith('station')) {
           this.updateNeighborStations(sx, sz, rot, prevType, stLayer);
         }

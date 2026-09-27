@@ -25,7 +25,7 @@ import { MiniMap } from './ui/MiniMap';
 import { ScheduleUI } from './ui/ScheduleUI';
 import { SwitchScheduleUI } from './ui/SwitchScheduleUI';
 import { WorldLabelManager } from './ui/WorldLabelManager';
-import { disposeHierarchy } from './graphics/materials';
+import { disposeHierarchy, GameMaterials } from './graphics/materials';
 
 const CURVE_DIR_ORDER: CurveDirection[] = ['N_E', 'E_S', 'S_W', 'W_N'];
 const CURVE_DIR_LABEL: Record<CurveDirection, string> = {
@@ -736,10 +736,7 @@ class GameApp {
       this.deployDirectionIdx = 0;
       this.pendingTrainDeploy = null;
       this.clearHoverTrainGhost();
-      this.uiManager.setRotationHint(
-        true,
-        `🚆 【${item.name}】配置先を選択: 線路をクリック（仮配置後に🔄回転で向き調整）`
-      );
+      this.updateRotationHint(this.uiManager.getActiveTool());
     };
 
     // ⑦ 営業中の列車を車庫へ回送（回収）する
@@ -772,9 +769,10 @@ class GameApp {
         if (train.currentTile.layer !== this.worldMap.activeLayer) {
           this.switchActiveLayer(train.currentTile.layer, false);
         }
-        this.cameraManager.startTracking({
-          position: new THREE.Vector3(train.frontPosition.x, 0, train.frontPosition.z)
-        });
+        const target = this.trainManager.getFollowTargetByTrainId(train.id);
+        if (target) {
+          this.cameraManager.startTracking(target, true);
+        }
         this.uiManager.showTrainInspector(train);
       }
     };
@@ -1026,7 +1024,7 @@ class GameApp {
       // 地上・高架: 通常の地表面と地形を表示、地下床は非表示
       this.renderer.setGroundVisible(true);
       this.terrainRenderer.setVisible(true);
-      this.terrainRenderer.setTransparentMode(false);
+      this.terrainRenderer.setTransparentMode(GameMaterials.isTransparentMode());
       this.renderer.setUndergroundFloor(false);
       this.renderer.setGridHeight(targetHeight);
       this.renderer.setUndergroundMode(false);
@@ -1381,7 +1379,9 @@ class GameApp {
         label = `潜入方向: ${entry} → ${exit} (地上→地下)`;
       } else if (isStation) {
         const sideText = this.currentStationSide === 'left' ? '左' : '右';
-        label = `向き: ${AXIS_LABEL[this.currentRotation % 2]}（${this.currentStationLength}両・ホーム${sideText}側）`;
+        const axisText = AXIS_LABEL[this.currentRotation % 2];
+        label = `向き: ${axisText}（${this.currentStationLength}両・ホーム${sideText}側）`;
+        this.uiManager.setStationRotationText(axisText);
       } else {
         label = `向き: ${AXIS_LABEL[this.currentRotation % 2]}`;
       }
@@ -1925,7 +1925,11 @@ class GameApp {
     z?: number
   ): THREE.Object3D | null {
     let effectiveTool = this.resolveAutoToolForLayer(tool, layer);
-    if (x !== undefined && z !== undefined && (tool === 'rail-straight' || tool === 'rail-tunnel') && this.worldMap.isTunnelSection(x, z, layer)) {
+    const isTunnelSec = (x !== undefined && z !== undefined)
+      ? this.worldMap.isTunnelSection(x, z, layer)
+      : (layer < 0 || tool === 'rail-tunnel');
+
+    if (isTunnelSec && (tool === 'rail-straight' || tool === 'rail-tunnel')) {
       effectiveTool = 'rail-tunnel';
     }
     const axis = rotation % 2;
@@ -1943,10 +1947,10 @@ class GameApp {
         mesh = ModelFactory.createElevatedTrack(axis, true, baseH);
         break;
       case 'rail-curve':
-        mesh = ModelFactory.createCurveTrackSegment(CURVE_DIR_ORDER[rotation], false);
+        mesh = ModelFactory.createCurveTrackSegment(CURVE_DIR_ORDER[rotation], false, 3.0, isTunnelSec);
         break;
       case 'rail-curve-elevated':
-        mesh = ModelFactory.createCurveTrackSegment(CURVE_DIR_ORDER[rotation], true, baseH);
+        mesh = ModelFactory.createCurveTrackSegment(CURVE_DIR_ORDER[rotation], true, baseH, false);
         break;
       case 'rail-slope':
         mesh = this.createSlopeGhostGroup(axis, rotation >= 2);
@@ -1955,16 +1959,16 @@ class GameApp {
         mesh = this.createUndergroundSlopeGhostGroup(axis, rotation >= 2);
         break;
       case 'point-switch':
-        mesh = ModelFactory.createSwitchHub(rotation, false, false, branchSide);
+        mesh = ModelFactory.createSwitchHub(rotation, false, false, branchSide, 3.0, isTunnelSec);
         break;
       case 'point-switch-elevated':
-        mesh = ModelFactory.createSwitchHub(rotation, false, true, branchSide, baseH);
+        mesh = ModelFactory.createSwitchHub(rotation, false, true, branchSide, baseH, false);
         break;
       case 'scissors-crossing':
-        mesh = this.createScissorsGhostGroup(rotation, false);
+        mesh = this.createScissorsGhostGroup(rotation, false, 3.0, isTunnelSec);
         break;
       case 'scissors-crossing-elevated':
-        mesh = this.createScissorsGhostGroup(rotation, true, baseH);
+        mesh = this.createScissorsGhostGroup(rotation, true, baseH, false);
         break;
       case 'station-small':
         mesh = ModelFactory.createStation(axis, false, stationPart, platformSide);
@@ -1999,7 +2003,7 @@ class GameApp {
 
     if (!mesh) return null;
 
-    const isTunnel = effectiveTool === 'rail-tunnel' || effectiveTool === 'rail-slope-underground' || layer < 0;
+    const isTunnel = isTunnelSec || effectiveTool === 'rail-tunnel' || effectiveTool === 'rail-slope-underground' || layer < 0;
     mesh.traverse(obj => {
       const m = obj as THREE.Mesh;
       if ((m as any).isMesh) {
@@ -2052,7 +2056,7 @@ class GameApp {
   /**
    * ③ シーサスクロッシング(2×2)ゴースト。WorldMap.placeScissorsCrossing と同じレイアウトで4パーツを並べる。
    */
-  private createScissorsGhostGroup(rotation: number, isElevated: boolean, pierHeight: number = 3.0): THREE.Group {
+  private createScissorsGhostGroup(rotation: number, isElevated: boolean, pierHeight: number = 3.0, isTunnel: boolean = false): THREE.Group {
     const group = new THREE.Group();
     const along = rotation === 1 ? 1 : 2;
     const across = WorldMap.rotateCW(along);
@@ -2067,7 +2071,7 @@ class GameApp {
     ];
 
     for (const o of offsets) {
-      const part = ModelFactory.createScissorsCrossingTile(along, o.role, isElevated, 'straight', pierHeight);
+      const part = ModelFactory.createScissorsCrossingTile(along, o.role, isElevated, 'straight', pierHeight, isTunnel);
       part.position.set(o.x * WorldMap.TILE_SIZE, 0, o.z * WorldMap.TILE_SIZE);
       group.add(part);
     }
@@ -2231,8 +2235,14 @@ class GameApp {
       targetLayer = 2;
     }
 
+    // マウス直下のマスに直線線路があれば、その線路の向きを引き継ぐ
+    const hoverTile = this.worldMap.getTile(x, z, targetLayer);
+    let rot = this.currentRotation;
+    if (hoverTile && (hoverTile.type === 'rail_ground' || hoverTile.type === 'rail_elevated')) {
+      rot = hoverTile.rotation;
+    }
+
     const len = this.currentStationLength;
-    const rot = this.currentRotation;
     const side = this.currentStationSide;
     const cacheKey = `${tool}_${x}_${z}_${len}_${rot}_${side}_${targetLayer}`;
     if (this.hoverStationGhost && this.hoverStationCacheKey === cacheKey) {
@@ -2321,6 +2331,9 @@ class GameApp {
    * 既に同じ位置に仮置き済みなら、その1件（または駅グループ）を取り消す（トグル）。
    */
   private stagePendingPlacement(tool: ActiveTool, x: number, z: number) {
+    // 最新の在線情報をポーズ中であっても同期
+    this.trainManager.updateOccupancyNow();
+
     // 資金赤字時の追加投資ガード
     if (!this.economy.canInvest) {
       this.uiManager.showToast('追加投資制限中', '資金が赤字のため、新規の線路敷設・建築は行えません。（資金が黒字化すると自動解除されます）', 'warning');
@@ -2363,8 +2376,14 @@ class GameApp {
 
     const isStationOrYard = effectiveTool === 'station-small' || effectiveTool === 'station-elevated' || effectiveTool === 'signal-yard' || effectiveTool === 'cargo-station';
     if (isStationOrYard) {
+      // マウス直下のマスに直線線路があれば、その線路の向きを引き継ぐ（オプションパーツとして設置）
+      const baseTrackTile = this.worldMap.getTile(x, z, curLayer);
+      let stationRot = this.currentRotation;
+      if (baseTrackTile && (baseTrackTile.type === 'rail_ground' || baseTrackTile.type === 'rail_elevated')) {
+        stationRot = baseTrackTile.rotation;
+      }
       const len = this.currentStationLength;
-      const axis = this.currentRotation % 2;
+      const axis = stationRot % 2;
       const stepX = axis === 1 ? 1 : 0;
       const stepZ = axis === 1 ? 0 : 1;
 
@@ -2410,18 +2429,16 @@ class GameApp {
           this.uiManager.showToast('設置不可', 'マップ外には設置できません。', 'warning');
           return;
         }
-        if (this.worldMap.isPermanentTrackOrStation(tx, tz, curLayer)) {
-          this.uiManager.showToast('設置不可', '線路や他の駅と重なる位置には設置できません。', 'warning');
-          return; // 本設置済みインフラがあるため仮置き不可
+        const existingTile = this.worldMap.getTile(tx, tz, curLayer);
+        // 【要件③】直線線路が存在する場合は、駅舎・ホーム・コンテナをオプションパーツとしてアタッチ可能
+        const isCompatibleTrack = existingTile && (existingTile.type === 'rail_ground' || existingTile.type === 'rail_elevated') && (existingTile.rotation === axis);
+        if (existingTile && existingTile.type !== 'empty' && !isCompatibleTrack) {
+          this.uiManager.showToast('設置不可', '既存の施設や曲線・分岐レールと重なる位置には駅を設置できません。', 'warning');
+          return;
         }
         if (this.pendingItems.some(p => p.x === tx && p.z === tz && (p.layer ?? 1) === curLayer)) {
           this.uiManager.showToast('設置不可', 'すでに仮置きされている線路や施設と重なる位置には設置できません。', 'warning');
           return; // 仮置き済みインフラがあるため仮置き不可
-        }
-        const existingTile = this.worldMap.getTile(tx, tz, curLayer);
-        if (existingTile && existingTile.type !== 'empty') {
-          this.uiManager.showToast('設置不可', '既存の施設や道路と重なる位置には駅を設置できません。', 'warning');
-          return;
         }
         if (this.trainManager.isTileOccupiedByTrain(tx, tz, curLayer)) {
           this.uiManager.showToast('設置不可', '列車が走行・停車中の位置には設置できません。', 'warning');
@@ -2447,7 +2464,7 @@ class GameApp {
           x: tx,
           z: tz,
           layer: curLayer,
-          rotation: this.currentRotation,
+          rotation: stationRot,
           ghost: null,
           stationPart: part,
           stationGroupId: groupId,
@@ -2586,6 +2603,9 @@ class GameApp {
 
     if (this.pendingItems.length === 0) return;
 
+    // 最新の在線情報を同期
+    this.trainManager.updateOccupancyNow();
+
     const items = this.pendingItems;
     const total = items.reduce((sum, it) => sum + TOOL_CONFIG[it.tool].cost, 0);
 
@@ -2614,12 +2634,9 @@ class GameApp {
           invalidStationGroupIds.add(groupId);
           break;
         }
-        if (this.worldMap.isPermanentTrackOrStation(it.x, it.z, lyr)) {
-          invalidStationGroupIds.add(groupId);
-          break;
-        }
         const existingTile = this.worldMap.getTile(it.x, it.z, lyr);
-        if (existingTile && existingTile.type !== 'empty') {
+        const isCompatibleTrack = existingTile && (existingTile.type === 'rail_ground' || existingTile.type === 'rail_elevated') && (existingTile.rotation === (it.rotation % 2));
+        if (existingTile && existingTile.type !== 'empty' && !isCompatibleTrack) {
           invalidStationGroupIds.add(groupId);
           break;
         }
@@ -2844,12 +2861,23 @@ class GameApp {
     }
 
     // 全占有予定マスの事前空き地・衝突判定（境界外、既存本設置、走行中列車、水辺制約）
+    const isStationTool = tool.startsWith('station') || tool.startsWith('cargo-station') || tool === 'signal-yard';
     for (const pos of targetPositions) {
       if (!this.worldMap.isInBounds(pos.x, pos.z)) {
         return false;
       }
-      if (this.worldMap.isPermanentTrackOrStation(pos.x, pos.z, pos.layer)) {
-        return false;
+      const existingTile = this.worldMap.getTile(pos.x, pos.z, pos.layer);
+      const isCompatibleTrack = isStationTool && existingTile &&
+        (existingTile.type === 'rail_ground' || existingTile.type === 'rail_elevated') &&
+        (existingTile.rotation === (rotation % 2));
+
+      if (!isCompatibleTrack) {
+        if (this.worldMap.isPermanentTrackOrStation(pos.x, pos.z, pos.layer)) {
+          return false;
+        }
+        if (existingTile && existingTile.type !== 'empty') {
+          return false;
+        }
       }
       if (this.trainManager.isTileOccupiedByTrain(pos.x, pos.z, pos.layer)) {
         return false;
@@ -3013,11 +3041,9 @@ class GameApp {
       };
 
       this.uiManager.setPlacementButtonsVisible(true);
+      this.uiManager.setRotateButtonVisible(true);
       this.audioManager.playBuildSound();
-      this.uiManager.setRotationHint(
-        true,
-        `🚆 【${item.name}】仮配置中: 🔄回転(Rキー)で向き切替（進行方向: ${DIR_LABEL[dirIdx]}）/「設置を決定」で営業運行開始`
-      );
+      this.updateRotationHint(tool);
       return;
     }
 
@@ -3030,9 +3056,10 @@ class GameApp {
         if (train.currentTile.layer !== this.worldMap.activeLayer) {
           this.switchActiveLayer(train.currentTile.layer, false);
         }
-        this.cameraManager.startTracking({
-          position: new THREE.Vector3(train.frontPosition.x, 0, train.frontPosition.z)
-        });
+        const target = this.trainManager.getFollowTargetByTrainId(train.id);
+        if (target) {
+          this.cameraManager.startTracking(target, true);
+        }
         this.uiManager.showTrainInspector(train);
         return;
       }
@@ -3082,28 +3109,32 @@ class GameApp {
           alert('このカテゴリーの撤去ツールでは撤去できない物です。');
           return;
         }
-        // ⑤ 列車走行中・停車中線路の撤去安全ガード（無限後退・更地彷徨幽霊列車化を防止）
-        if (this.trainManager.isTileOccupiedByTrain(x, z, curLayer)) {
-          alert('⚠️ 列車が走行中・停車中の線路や駅は撤去できません！\n列車が通過するのを待つか、車両管理から車庫へ回送してください。');
-          return;
-        }
-        const config = TOOL_CONFIG[tool];
-        if (this.economy.spendFunds(config.cost, true)) {
-          // ⑤ 駅・信号場等の複数マス施設の場合、撤去対象となる全タイルのコンテナ描写を漏れなく破棄
-          const tilesToClean: Array<{ x: number; z: number; layer: GridLayer }> = [];
-          if (tile.type.includes('station') || tile.type === 'signal_yard') {
-            const stTiles = this.worldMap.getStationTiles(x, z, curLayer);
-            if (stTiles.length > 0) {
-              for (const st of stTiles) {
-                tilesToClean.push({ x: st.x, z: st.z, layer: (st.layer ?? curLayer) as GridLayer });
-              }
-            } else {
-              tilesToClean.push({ x, z, layer: curLayer });
+        // ⑤ 駅・信号場等の複数マス施設の場合、撤去対象となる全タイルのコンテナ描写を漏れなく破棄
+        const tilesToClean: Array<{ x: number; z: number; layer: GridLayer }> = [];
+        if (tile.type.includes('station') || tile.type === 'signal_yard') {
+          const stTiles = this.worldMap.getStationTiles(x, z, curLayer);
+          if (stTiles.length > 0) {
+            for (const st of stTiles) {
+              tilesToClean.push({ x: st.x, z: st.z, layer: (st.layer ?? curLayer) as GridLayer });
             }
           } else {
             tilesToClean.push({ x, z, layer: curLayer });
           }
+        } else {
+          tilesToClean.push({ x, z, layer: curLayer });
+        }
 
+        // ⑤ 列車走行中・停車中線路の撤去安全ガード（撤去対象全マスを検証）
+        this.trainManager.updateOccupancyNow();
+        for (const t of tilesToClean) {
+          if (this.trainManager.isTileOccupiedByTrain(t.x, t.z, t.layer)) {
+            alert('⚠️ 列車が走行中・停車中の線路や駅は撤去できません！\n列車が通過するのを待つか、車両管理から車庫へ回送してください。');
+            return;
+          }
+        }
+
+        const config = TOOL_CONFIG[tool];
+        if (this.economy.spendFunds(config.cost, true)) {
           this.worldMap.demolishTile(x, z, curLayer);
           for (const t of tilesToClean) {
             this.removeCargoYardVisual(t.x, t.z, t.layer);
@@ -3112,6 +3143,11 @@ class GameApp {
           this.scheduleUI.refreshOrClose();
           this.miniMap.requestStaticUpdate();
           this.terrainRenderer.rebuildAll(this.gridManager, this.renderer.scene);
+
+          // 【不具合②解消】撤去直後に在線情報を最新化し、ホバー駅ゴーストキャッシュをクリア
+          this.trainManager.updateOccupancyNow();
+          this.clearHoverStationGhost();
+          this.hoverStationCacheKey = '';
         } else {
           alert('資金が不足しています！');
         }

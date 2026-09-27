@@ -31,9 +31,10 @@ export class ModelFactory {
   public static createCurveTrackSegment(
     curveDir: 'N_E' | 'E_S' | 'S_W' | 'W_N',
     isElevated: boolean = false,
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
-    return TrackMeshBuilder.createCurveTrackSegment(curveDir, isElevated, pierHeight);
+    return TrackMeshBuilder.createCurveTrackSegment(curveDir, isElevated, pierHeight, isTunnel);
   }
 
   public static createSwitchHub(
@@ -41,9 +42,10 @@ export class ModelFactory {
     isDiverged: boolean = false,
     isElevated: boolean = false,
     branchSide: 'left' | 'right' = 'right',
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
-    return TrackMeshBuilder.createSwitchHub(forward, isDiverged, isElevated, branchSide, pierHeight);
+    return TrackMeshBuilder.createSwitchHub(forward, isDiverged, isElevated, branchSide, pierHeight, isTunnel);
   }
 
   public static createScissorsCrossingTile(
@@ -51,9 +53,10 @@ export class ModelFactory {
     role: 0 | 1 | 2 | 3,
     isElevated: boolean = false,
     crossingState: 'straight' | 'cross-a' | 'cross-b' = 'straight',
-    pierHeight: number = 3.0
+    pierHeight: number = 3.0,
+    isTunnel: boolean = false
   ): THREE.Group {
-    return TrackMeshBuilder.createScissorsCrossingTile(along, role, isElevated, crossingState, pierHeight);
+    return TrackMeshBuilder.createScissorsCrossingTile(along, role, isElevated, crossingState, pierHeight, isTunnel);
   }
 
   public static createLevelCrossing(railAxis: number = 0): THREE.Group {

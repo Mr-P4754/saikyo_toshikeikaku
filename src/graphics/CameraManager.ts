@@ -158,9 +158,15 @@ export class CameraManager {
   /**
    * 列車追尾の開始
    */
-  public startTracking(target: FollowTarget): void {
+  public startTracking(target: FollowTarget, immediate: boolean = false): void {
     this.trackingTarget = target;
     this.isTracking = true;
+    if (immediate && target.position) {
+      this.target.copy(target.position);
+      if (this.viewMode === 'quarter_view') {
+        this.updateCameraTransform();
+      }
+    }
   }
 
   /**
