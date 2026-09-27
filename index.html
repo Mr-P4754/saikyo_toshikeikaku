@@ -15,6 +15,9 @@
       <!-- 3D Canvas Container -->
       <div id="canvas-container"></div>
 
+      <!-- ワールド内 3D追従ラベルコンテナ（駅待機乗客数・列車乗客数） -->
+      <div id="world-labels-container" class="world-labels-container"></div>
+
       <!-- Header HUD (ソリッドデザイン・ステータスバー) -->
       <header id="hud-header">
         <div class="header-left">
@@ -110,6 +113,20 @@
               <circle cx="12" cy="12" r="3"></circle>
             </svg>
           </button>
+          <button id="btn-slicer-toggle" class="icon-action-btn active" title="階層スライサー表示切替">
+            <svg class="action-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+          </button>
+          <button id="btn-minimap-toggle" class="icon-action-btn active" title="路線図ミニマップ表示切替">
+            <svg class="action-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+              <line x1="8" y1="2" x2="8" y2="18"></line>
+              <line x1="16" y1="6" x2="16" y2="22"></line>
+            </svg>
+          </button>
           <button id="btn-report" class="icon-action-btn" title="財務・都市レポート">
             <svg class="action-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <line x1="18" y1="20" x2="18" y2="10"></line>
@@ -169,6 +186,15 @@
               <polygon points="17.5 4 23 12 17.5 20 17.5 4"></polygon>
             </svg>
           </button>
+          <button id="btn-speed-5" class="speed-btn" title="極超高速 (▷▷▷▷▷ 12時間/秒)">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <polygon points="1 4 4.8 12 1 20 1 4"></polygon>
+              <polygon points="5.3 4 9.1 12 5.3 20 5.3 4"></polygon>
+              <polygon points="9.6 4 13.4 12 9.6 20 9.6 4"></polygon>
+              <polygon points="13.9 4 17.7 12 13.9 20 13.9 4"></polygon>
+              <polygon points="18.2 4 22 12 18.2 20 18.2 4"></polygon>
+            </svg>
+          </button>
         </div>
 
         <div class="side-dock-divider"></div>
@@ -186,6 +212,8 @@
               <polyline points="23 4 23 10 17 10"></polyline>
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
             </svg>
+          </button>
+        </div>
       </aside>
 
       <!-- 全7階層（B2F〜地上5F）スライサーセレクター -->
@@ -233,6 +261,11 @@
           <div class="cab-speed-meter">
             <span class="cab-speed-val" id="cab-speed-val">65</span>
             <span class="cab-speed-unit">km/h</span>
+          </div>
+          <div class="cab-train-controls">
+            <button id="btn-cab-prev" class="cab-nav-btn" title="前の列車に切替">◀</button>
+            <button id="btn-cab-change" class="cab-nav-btn change" title="乗車列車を選択">列車選択</button>
+            <button id="btn-cab-next" class="cab-nav-btn" title="次の列車に切替">▶</button>
           </div>
           <button id="btn-exit-cab" class="exit-cab-btn">全体視点に戻る</button>
         </div>
@@ -529,6 +562,20 @@
             <button id="btn-close-schedule" class="close-btn">✕</button>
           </div>
           <div class="modal-body" id="schedule-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- 車窓モード 列車選択モーダル -->
+      <div id="cab-select-modal" class="modal-overlay hidden">
+        <div class="modal-card cab-select-card">
+          <div class="modal-header">
+            <h3 id="cab-select-modal-title">車窓モード - 乗車列車を選択</h3>
+            <button id="btn-close-cab-select" class="close-btn">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-sub">乗車したい列車を選択してください。運転席からのリアルな前面展望を楽しめます。</p>
+            <div id="cab-train-list" class="cab-train-list"></div>
+          </div>
         </div>
       </div>
 

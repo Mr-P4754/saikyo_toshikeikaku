@@ -3,7 +3,7 @@ import { WorldMap, TileData, SwitchState, CrossingState, StationActionMode, Depa
 import { ModelFactory } from '../models/ModelFactory';
 import { AudioManager } from '../engine/AudioManager';
 import { FollowTarget } from '../graphics/CameraManager';
-import { VehicleModelInfo, getVehicleById } from './VehicleCatalog';
+import { VehicleModelInfo, getVehicleById, getRunningCostPerDay, getRunningCostPerTrip, getMaxCapacity } from './VehicleCatalog';
 import { BlockSignalManager } from '../core/BlockSignal';
 import { GridLayer, DeadlockEvent } from '../core/types';
 import { layerToHeight } from '../core/Grid3D';
@@ -430,7 +430,25 @@ export class TrainManager {
       const oldRearSample = this.sampleHistoryAtLag(train.pathHistory, lagDist);
       const rearX = Math.round(oldRearSample.pos.x / WorldMap.TILE_SIZE);
       const rearZ = Math.round(oldRearSample.pos.z / WorldMap.TILE_SIZE);
-      const reverseNext = this.findNextTrackTile(rearX, rearZ, train.currentTile.layer, reverseDir, true);
+
+      // 旧先頭車の階層に固定せず、新先頭車（旧最後尾）の物理高さやレイヤーから最適な軌道タイルを探索
+      let rearLayer: GridLayer = (oldRearSample.layer ?? train.currentTile.layer) as GridLayer;
+      let rearTile = this.worldMap.getTile(rearX, rearZ, rearLayer);
+      if (!rearTile || !this.isTrackTile(rearTile)) {
+        let minDiff = Infinity;
+        for (const lyr of GRID_LAYERS) {
+          const t = this.worldMap.getTile(rearX, rearZ, lyr);
+          if (t && this.isTrackTile(t)) {
+            const h = this.getTileInterpolatedHeight(t, lyr);
+            const diff = Math.abs(h - oldRearSample.pos.y);
+            if (diff < minDiff) {
+              minDiff = diff;
+              rearLayer = lyr;
+            }
+          }
+        }
+      }
+      const reverseNext = this.findNextTrackTile(rearX, rearZ, rearLayer, reverseDir, true);
 
       if (reverseNext) {
         // 反対側に進める線路がある場合は正常に反転
@@ -477,21 +495,38 @@ export class TrainManager {
         const trainB = this.trains[j];
         if (!trainB || !trainB.occupiedTiles || trainB.occupiedTiles.length === 0) continue;
 
-        // ① 別線路（複線など）の列車に対する立ち往生（ATS誤爆）を防止
-        // 占有しているタイル（現在地・目標・全車両）が1つも被っていなければ完全に別線路とみなす
-        let isSharingTile = false;
+        // ① 別線路（複線など）の列車に対する立ち往生（ATS誤爆）を防止しつつ、
+        // 同一線路上で前方2マス（安全車間距離4.2m）以内にいる先行列車を確実に検知する
+        let isSharingRoute = false;
         for (const ta of trainA.occupiedTiles) {
-          for (const tb of trainB.occupiedTiles) {
-            if (ta.x === tb.x && ta.z === tb.z && ta.layer === tb.layer) {
-              isSharingTile = true;
-              break;
-            }
+          if (trainB.occupiedTiles.some(tb => tb.x === ta.x && tb.z === ta.z && tb.layer === ta.layer)) {
+            isSharingRoute = true;
+            break;
           }
-          if (isSharingTile) break;
         }
 
-        // 別線路であれば完全に衝突判定から除外する
-        if (!isSharingTile) continue;
+        // targetTile の先にある進路タイルの先読み（車間距離4.2m≒2マス先の先行列車検知用）
+        if (!isSharingRoute) {
+          const next1 = this.findNextTrackTile(trainA.targetTile.x, trainA.targetTile.z, trainA.targetTile.layer, trainA.direction);
+          if (next1) {
+            const l1 = (next1.layer ?? trainA.targetTile.layer) as GridLayer;
+            if (trainB.occupiedTiles.some(tb => tb.x === next1.x && tb.z === next1.z && tb.layer === l1)) {
+              isSharingRoute = true;
+            } else {
+              const dir1 = new THREE.Vector3(next1.x - trainA.targetTile.x, 0, next1.z - trainA.targetTile.z).normalize();
+              const next2 = this.findNextTrackTile(next1.x, next1.z, l1, dir1);
+              if (next2) {
+                const l2 = (next2.layer ?? l1) as GridLayer;
+                if (trainB.occupiedTiles.some(tb => tb.x === next2.x && tb.z === next2.z && tb.layer === l2)) {
+                  isSharingRoute = true;
+                }
+              }
+            }
+          }
+        }
+
+        // 同一進路上でなければ衝突判定から除外する
+        if (!isSharingRoute) continue;
 
         // 先行列車 trainB のすべての車体ポイント（先頭＋各車両位置）を走査
         const checkPoints = [trainB.frontPosition, ...trainB.cars.map(c => c.position)];
@@ -563,7 +598,11 @@ export class TrainManager {
     const leaderTile = this.worldMap.getTile(leader.currentTile.x, leader.currentTile.z, leader.currentTile.layer);
     if (!followerTile || !leaderTile) return false;
     if (!leaderTile.type.startsWith('station')) return false; // 信号場・留置線での併合は対象外
-    if (!followerTile.stationGroupId || followerTile.stationGroupId !== leaderTile.stationGroupId) return false;
+
+    // followerが既に駅にいるか、または駅ホームに向かって進入中（targetTileが同じ駅）かを判定
+    const targetTileData = this.worldMap.getTile(follower.targetTile.x, follower.targetTile.z, follower.targetTile.layer);
+    const followerStationGroupId = followerTile.stationGroupId ?? targetTileData?.stationGroupId;
+    if (!followerStationGroupId || followerStationGroupId !== leaderTile.stationGroupId) return false;
 
     const effectiveLength = this.worldMap.getStationRunLength(leader.currentTile.x, leader.currentTile.z, leader.currentTile.layer) || 1;
     return checkCoupleEligibility(leader.carCount, follower.carCount, effectiveLength).eligible;
@@ -612,6 +651,37 @@ export class TrainManager {
   }
 
   /**
+   * 先頭車の最新位置・姿勢を経路履歴（pathHistory）へ即座に記録・同期する
+   * 反転処理（reverseTrainDirection）や駅到着・停止時に呼び出すことで、
+   * 極超高速サブステップ中であっても走行履歴が前フレームのまま乖離するのを防止する
+   */
+  private recordCurrentHeadSample(train: TrainInstance): void {
+    this.updateTrainFrontPosition(train);
+    const fromTile = this.worldMap.getTile(train.currentTile.x, train.currentTile.z, train.currentTile.layer);
+    const toTile = this.worldMap.getTile(train.targetTile.x, train.targetTile.z, train.targetTile.layer);
+    const fromH = this.getTileInterpolatedHeight(fromTile, train.currentTile.layer);
+    const toH = this.getTileInterpolatedHeight(toTile, train.targetTile.layer);
+
+    const yaw = train.direction.lengthSq() > 0.001
+      ? Math.atan2(train.direction.x, train.direction.z)
+      : (train.pathHistory[train.pathHistory.length - 1]?.yaw ?? 0);
+
+    const heightDiff = toH - fromH;
+    const pitch = Math.abs(heightDiff) > 0.05
+      ? -Math.atan2(heightDiff, WorldMap.TILE_SIZE)
+      : 0;
+
+    const isCurving = fromTile?.type.includes('curve') || toTile?.type.includes('curve');
+    const cant = isCurving ? 0.04 : 0;
+
+    const currentHeadLayer: GridLayer = (train.progress < 0.5
+      ? (train.currentTile.layer ?? 1)
+      : (train.targetTile.layer ?? train.currentTile.layer ?? 1)) as GridLayer;
+
+    this.recordPathSample(train, train.frontPosition, yaw, pitch, cant, currentHeadLayer);
+  }
+
+  /**
    * メイン更新ループ
    */
   public update(
@@ -620,24 +690,25 @@ export class TrainManager {
     onPassengerFare: (amount: number) => void,
     currentHour: number = 0,
     currentMinute: number = 0,
-    getDemandMultiplier?: (x: number, z: number, hour: number) => number,
-    cargoHooks?: CargoHooks
+    _getDemandMultiplier?: (x: number, z: number, hour: number) => number,
+    cargoHooks?: CargoHooks,
+    onPassengerCost?: (amount: number) => void
   ) {
     if (this.trains.length === 0 || speedMultiplier <= 0) return;
 
     const dt = deltaTime * speedMultiplier;
 
     // 【時空の歪み解消】サブステッピング（Sub-stepping）の導入
-    // 10倍速＋フレーム落ち（0.1sフレームスキップ）等で1フレームに長距離ワープするのを防ぐため、
-    // 1サブステップあたりの最大移動進行度を MAX_SUB_STEP_PROGRESS（0.25マス）に制限し、
-    // 必要なサブステップ数に均等分割して物理・閉塞・ATS・駅判定を小刻みに確実に実行する。
-    const MAX_SUB_STEP_PROGRESS = 0.25;
+    // 高倍速（超高速・極超高速 720倍速=12時間/秒）でも脱線・閉塞すり抜け・駅通過判定の飛び越しが起きないよう、
+    // 1サブステップあたりの最大移動進行度を制御し、適切なサブステップ数に均等分割する。
+    const MAX_SUB_STEP_PROGRESS = speedMultiplier >= 60 ? 0.75 : 0.25;
     let maxSpeed = 1.5;
     for (const t of this.trains) {
       if (t.speed > maxSpeed) maxSpeed = t.speed;
     }
     const maxProgressInFrame = maxSpeed * dt;
-    const numSubSteps = Math.min(Math.max(1, Math.ceil(maxProgressInFrame / MAX_SUB_STEP_PROGRESS)), 10);
+    const maxAllowedSteps = speedMultiplier >= 60 ? 40 : 10;
+    const numSubSteps = Math.min(Math.max(1, Math.ceil(maxProgressInFrame / MAX_SUB_STEP_PROGRESS)), maxAllowedSteps);
     const subDt = dt / numSubSteps;
 
     // Phase3 ①②: 併合で消滅する編成・分割で新規生成される編成は、ループ終了後にまとめて反映する
@@ -722,7 +793,8 @@ export class TrainManager {
               canDeparture = (train.stopElapsedMinutes ?? 0) >= required;
             } else if (rule.mode === 'pattern') {
               const patMin = rule.patternMinute ?? 0;
-              canDeparture = ScheduleEngine.isPatternMinuteInRange(prevTotal, currentTotalMin, patMin);
+              const interval = rule.patternIntervalMinutes ?? 60;
+              canDeparture = ScheduleEngine.isPatternIntervalInRange(prevTotal, currentTotalMin, patMin, interval);
             } else if (rule.mode === 'specific') {
               const specMin = (((rule.specificHour ?? 0) % 24) * 60 + (rule.specificMinute ?? 0)) % 1440;
               canDeparture = ScheduleEngine.isMinuteInRange(prevTotal, currentTotalMin, specMin);
@@ -741,17 +813,91 @@ export class TrainManager {
               this.lastUpdateMinute
             );
             canDeparture = evalResult.canDepart;
-            shouldReverse = evalResult.shouldReverse;
+            shouldReverse = evalResult.shouldReverse || !!train.isReversingAtStation;
           }
         }
 
         if (canDeparture) {
-          // 出発信号機判定: 発車先の目標閉塞が青信号になるまで駅ホームで安全に待機（停止維持）
+          // 発車進路（新目標タイル）の決定:
+          // 既に信号待ち(isSignalStopped)で進路解決済みの場合は再探索をスキップ
+          if (!train.isSignalStopped) {
+            if (shouldReverse) {
+              train.isReversingAtStation = false;
+              this.reverseTrainDirection(train);
+            } else {
+              // Phase3: 発車タイミングに達したこの瞬間に進路（次のタイル）を決定する
+              this.resolveNextTileOrReverse(train);
+            }
+          }
+
+          // 出発信号機判定: 決定された発車先の目標閉塞が青信号になるまで駅ホームで安全に待機（停止維持）
           const toLayer = train.targetTile.layer;
           const canEnter = this.blockSignalManager.canEnterTile(train.id, train.targetTile.x, train.targetTile.z, toLayer);
           if (!canEnter) {
             train.isSignalStopped = true;
-            continue; // 出発信号が赤なので発車保留
+            continue; // 出発信号が赤なので発車保留（進路は既に決定済み）
+          }
+
+          // ② 出発時の乗車処理 (Boarding)
+          if (train.model.category !== 'freight') {
+            const stoppedTile = this.worldMap.getTile(train.currentTile.x, train.currentTile.z, train.currentTile.layer);
+            const isYard = stoppedTile?.type === 'signal_yard';
+            const isCargo = stoppedTile?.type.startsWith('cargo_station') || !!stoppedTile?.isCargoYard;
+
+            if (stoppedTile && !isYard && !isCargo) {
+              const waiting = stoppedTile.stationPassengers ?? 0;
+              const maxCap = getMaxCapacity(train.model, train.carCount);
+              const freeSeats = Math.max(0, maxCap - train.passengers);
+              const boarding = Math.min(waiting, freeSeats);
+
+              if (boarding > 0) {
+                train.passengers += boarding;
+                const remainingWaiting = waiting - boarding;
+                stoppedTile.stationPassengers = remainingWaiting;
+
+                // ホーム内の全構成タイルの待機乗客数も同期
+                const platInfo = this.worldMap.stationManager.getPlatformByTile(
+                  train.currentTile.x,
+                  train.currentTile.z,
+                  train.currentTile.layer
+                );
+                if (platInfo) {
+                  for (const t of platInfo.platform.tiles) {
+                    const tData = this.worldMap.getTile(t.x, t.z, (t.layer ?? 1) as GridLayer);
+                    if (tData) tData.stationPassengers = remainingWaiting;
+                  }
+                }
+
+                // 運賃収入・統計の更新
+                const fare = Math.round(train.model.farePerRide * boarding);
+                train.totalPassengers += boarding;
+                train.totalRevenue += fare;
+                train.monthlyProfit = train.totalRevenue - train.totalCost;
+
+                stoppedTile.dailyPassengers = (stoppedTile.dailyPassengers ?? 0) + boarding;
+                stoppedTile.totalPassengers = (stoppedTile.totalPassengers ?? 0) + boarding;
+                stoppedTile.totalRevenue = (stoppedTile.totalRevenue ?? 0) + fare;
+                stoppedTile.stationNetProfit = (stoppedTile.totalRevenue ?? 0) - (stoppedTile.stationMaintenance ?? 0);
+
+                if (platInfo) {
+                  this.worldMap.stationManager.addBoardingRecord(
+                    platInfo.station.id,
+                    platInfo.platform.id,
+                    boarding,
+                    fare
+                  );
+                }
+
+                onPassengerFare(fare);
+              }
+
+              // 【乗車率75%損益分岐点モデル】発車時の区間運行費用の計上
+              // 1区間あたり運行費用 = 定員 * 0.75 * 運賃（乗車率75%でトントン）
+              const tripCost = getRunningCostPerTrip(train.model, train.carCount);
+              train.totalCost += tripCost;
+              train.monthlyProfit = train.totalRevenue - train.totalCost;
+              onPassengerCost?.(tripCost);
+            }
           }
 
           train.isSignalStopped = false;
@@ -760,15 +906,6 @@ export class TrainManager {
           train.stopElapsedMinutes = 0;
           train.overrideDepartureRule = null;
           this.audioManager.playStationBell();
-
-          // 駅折り返しダイヤの場合: 進行方向と反対側の先頭車両が新先頭になり逆走開始
-          if (shouldReverse) {
-            train.isReversingAtStation = false;
-            this.reverseTrainDirection(train);
-          } else {
-            // Phase3: 発車が確定したこの瞬間に、はじめて進路（次のタイル）を決定する
-            this.resolveNextTileOrReverse(train);
-          }
         }
         continue;
       }
@@ -868,10 +1005,12 @@ export class TrainManager {
               // 【通過＋折り返し対応】通過設定かつ折り返しフラグが有効な場合、その場で進行方向を反転
               if (arrival.isReverse) {
                 this.reverseTrainDirection(train);
+                continue; // 反転後は新先頭車から逆方向への進路が決定済みのため、このサブステップは完了
               }
             } else {
               train.isStopped = true;
               train.progress = 0;
+              this.recordCurrentHeadSample(train);
 
               // ② 貨物駅＋貨物列車の場合は、コンテナ積み降ろしを行う
               if (isCargo && isFreight && cargoHooks) {
@@ -908,20 +1047,22 @@ export class TrainManager {
                         train.cargoTraveledTiles = 0;
                       }
 
+                      curTileData.dailyUnloadedCargo = (curTileData.dailyUnloadedCargo ?? 0) + delivered;
                       curTileData.totalRevenue = (curTileData.totalRevenue ?? 0) + revenue;
                       curTileData.stationNetProfit = (curTileData.totalRevenue ?? 0) - (curTileData.stationMaintenance ?? 0);
 
-                      // 【駅統計連携】貨物駅での運賃収入を StationManager に加算・同期
+                      // 【駅統計連携】貨物駅での運賃収入および荷下ろし数を StationManager に加算・同期
                       const platInfo = this.worldMap.stationManager.getPlatformByTile(
                         train.currentTile.x,
                         train.currentTile.z,
                         train.currentTile.layer
                       );
                       if (platInfo) {
-                        this.worldMap.stationManager.addBoardingRecord(
+                        this.worldMap.stationManager.addCargoRecord(
                           platInfo.station.id,
                           platInfo.platform.id,
                           0,
+                          delivered,
                           revenue
                         );
                       }
@@ -939,6 +1080,24 @@ export class TrainManager {
                       train.cargoLoad = (train.cargoLoad ?? 0) + loaded;
                       train.cargoPickup = { x: train.currentTile.x, z: train.currentTile.z };
                       train.cargoTraveledTiles = 0;
+                      curTileData.dailyLoadedCargo = (curTileData.dailyLoadedCargo ?? 0) + loaded;
+
+                      // 【駅統計連携】貨物駅での積み込み数を StationManager に加算・同期
+                      const platInfo = this.worldMap.stationManager.getPlatformByTile(
+                        train.currentTile.x,
+                        train.currentTile.z,
+                        train.currentTile.layer
+                      );
+                      if (platInfo) {
+                        this.worldMap.stationManager.addCargoRecord(
+                          platInfo.station.id,
+                          platInfo.platform.id,
+                          loaded,
+                          0,
+                          0
+                        );
+                      }
+
                       // 列車のコンテナ描写を積載数だけ増加
                       VehicleMeshBuilder.updateTrainCargoVisual(train.cars, train.cargoLoad);
                       // 駅のコンテナ描写を積載数だけ減少
@@ -948,43 +1107,40 @@ export class TrainManager {
                 }
               } else if (!isYard && !isCargo && !isFreight) {
                 // 信号場・貨物駅以外の旅客駅かつ旅客列車の場合のみ、旅客処理を行う
-                // ⑤ 要件⑤: 時間帯別・ゾーン方向別の乗客需要カーブ（朝夕ラッシュ多め、日中普通、深夜ほぼゼロ）
-                const demandMult = getDemandMultiplier
-                  ? getDemandMultiplier(train.currentTile.x, train.currentTile.z, currentHour)
-                  : TrainManager.getHourlyDemandMultiplier(currentHour);
-                const baseBoarding = (Math.floor(Math.random() * 60) + 70) * train.carCount;
-                const boarding = Math.max(1, Math.round(baseBoarding * demandMult));
-                const fare = Math.round(train.model.farePerRide * boarding);
+                // ① 駅到着時の降車処理 (Alighting)
+                // 終点（行き止まり）または折り返し運転の場合は全員降車、途中駅では35〜60%が降車
+                if (train.passengers > 0) {
+                  let alighting = 0;
+                  if (arrival.isReverse || arrival.mode === 'reverse' || !peekNext) {
+                    alighting = train.passengers;
+                  } else {
+                    const alightRatio = 0.35 + Math.random() * 0.25;
+                    alighting = Math.min(train.passengers, Math.max(1, Math.round(train.passengers * alightRatio)));
+                  }
+                  train.passengers = Math.max(0, train.passengers - alighting);
+                  // 【重要】降りた乗客は駅外の目的地へ向かうため、待機乗客（stationPassengers）には一切追加・上書きしない。
+                  // ホームで以前から待っていた乗客のみが待機乗客としてホームに残り、発車時に乗車する。
 
-                // 列車乗客数と収支の更新
-                train.passengers = Math.min(train.capacity, Math.floor(boarding * 0.7) + Math.floor(train.passengers * 0.3));
-                train.totalPassengers += boarding;
-                train.totalRevenue += fare;
-                train.monthlyProfit = train.totalRevenue - train.totalCost;
+                  // 駅の乗降客数（降車客数）をカウント加算
+                  if (alighting > 0) {
+                    curTileData.dailyPassengers = (curTileData.dailyPassengers ?? 0) + alighting;
+                    curTileData.totalPassengers = (curTileData.totalPassengers ?? 0) + alighting;
 
-                // 駅乗客数と収支の更新
-                curTileData.stationPassengers = boarding;
-                curTileData.dailyPassengers = (curTileData.dailyPassengers ?? 0) + boarding;
-                curTileData.totalPassengers = (curTileData.totalPassengers ?? 0) + boarding;
-                curTileData.totalRevenue = (curTileData.totalRevenue ?? 0) + fare;
-                curTileData.stationNetProfit = (curTileData.totalRevenue ?? 0) - (curTileData.stationMaintenance ?? 0);
-
-                // 【駅の記憶喪失解消】駅グループ統計（StationManager）に乗降客数と運賃収入を加算・同期
-                const platInfo = this.worldMap.stationManager.getPlatformByTile(
-                  train.currentTile.x,
-                  train.currentTile.z,
-                  train.currentTile.layer
-                );
-                if (platInfo) {
-                  this.worldMap.stationManager.addBoardingRecord(
-                    platInfo.station.id,
-                    platInfo.platform.id,
-                    boarding,
-                    fare
-                  );
+                    const platInfo = this.worldMap.stationManager.getPlatformByTile(
+                      train.currentTile.x,
+                      train.currentTile.z,
+                      train.currentTile.layer
+                    );
+                    if (platInfo) {
+                      this.worldMap.stationManager.addBoardingRecord(
+                        platInfo.station.id,
+                        platInfo.platform.id,
+                        alighting,
+                        0 // 降車客のため運賃加算は0（乗車時に計上済み）
+                      );
+                    }
+                  }
                 }
-
-                onPassengerFare(fare);
               }
 
               // Phase3 ②: 途中駅での分割（切り離し）判定
@@ -1030,7 +1186,6 @@ export class TrainManager {
           train.speed = 0;
           train.isStopped = true;
           trainsPendingRemoval.push(train.id);
-          this.trains = this.trains.filter(t => t.id !== train.id);
           continue;
         }
 
@@ -1050,11 +1205,11 @@ export class TrainManager {
           }
         } else if (curTileData && curTileData.type.startsWith('scissors_crossing')) {
           // シーサスクロッシング通過時のダイヤ制御
-          const origin = this.worldMap.resolveCrossingOrigin(train.currentTile.x, train.currentTile.z);
+          const origin = this.worldMap.resolveCrossingOrigin(train.currentTile.x, train.currentTile.z, train.currentTile.layer);
           const switchSched = origin?.switchSchedule;
           if (origin && switchSched && switchSched.mode === 'timeline') {
             const targetCrossing = getSwitchDirectionAtTime(switchSched, currentHour, currentMinute, true);
-            this.worldMap.setCrossingState(origin.x, origin.z, targetCrossing as CrossingState);
+            this.worldMap.setCrossingState(origin.x, origin.z, targetCrossing as CrossingState, train.currentTile.layer);
           }
         }
 
@@ -1289,7 +1444,7 @@ export class TrainManager {
 
       // 該当座標に存在する軌道タイルを全階層から探索し、サンプルのワールド物理高さ(sample.pos.y)に最も適合する階層を特定
       // （※立体交差等で上下に線路が重なっている場合、sample.layer に近い階層を優先して吸い寄せ誤認を防止）
-      const candidateLayers: GridLayer[] = [-1, 1, 2, 3, 4, 5];
+      const candidateLayers: GridLayer[] = [...GRID_LAYERS];
       const baseLayer = sample.layer ?? train.currentTile.layer ?? 1;
       candidateLayers.sort((l1, l2) => Math.abs(l1 - baseLayer) - Math.abs(l2 - baseLayer));
 
@@ -1346,7 +1501,11 @@ export class TrainManager {
    * 車両が瞬間移動することなくその場から逆向きに走り出すよう物理座標と履歴を反転・再構築する。
    */
   private reverseTrainDirection(train: TrainInstance): void {
+    // 0. 反転直前に現在の先頭車位置・姿勢を経路履歴に同期し、サンプリング乖離を完全防止
+    this.recordCurrentHeadSample(train);
+
     const carCount = train.carCount;
+    const origStationGroupId = train.lastStationGroupId;
 
     // 1. 各車両の現在の完全な物理姿勢（位置・ヨー・ピッチ・カント）を高解像度でサンプリング
     // ※列車が今いる長さ（先頭〜最後尾）だけを0.5マス刻みで精密に切り出す（ワープ・すり抜け防止）
@@ -1375,7 +1534,7 @@ export class TrainManager {
     // 旧先頭車の階層をそのまま引き継ぐのではなく、新先頭車の物理高さ(newFrontPos.y)に最も適合する軌道タイルの階層を探索
     let bestLayer: GridLayer = train.currentTile.layer;
     let minDiff = Infinity;
-    const allLayers: GridLayer[] = [-1, 1, 2, 3, 4, 5];
+    const allLayers = GRID_LAYERS;
     for (const lyr of allLayers) {
       const t = this.worldMap.getTile(curX, curZ, lyr);
       if (t && this.isTrackTile(t)) {
@@ -1392,6 +1551,8 @@ export class TrainManager {
     const stationTile = this.worldMap.getTile(curX, curZ, train.currentTile.layer);
     if (stationTile && WorldMap.isStationTileType(stationTile.type)) {
       train.lastStationGroupId = stationTile.stationGroupId || `st_${curX}_${curZ}`;
+    } else if (origStationGroupId) {
+      train.lastStationGroupId = origStationGroupId;
     }
 
     // 4. 新先頭車の目標タイルを探索 (新進行方向に向かう出口を優先)
@@ -1438,6 +1599,7 @@ export class TrainManager {
     // 7. 編成の車両メッシュ群を再生成し、新先頭車と新最後尾を正しくセット
     for (const car of train.cars) {
       train.mesh.remove(car);
+      disposeHierarchy(car);
     }
     const formation = ModelFactory.createTrainFormation(train.model, train.carCount);
     train.cars = formation.cars;
@@ -1460,8 +1622,7 @@ export class TrainManager {
    */
   private performCoupling(leader: TrainInstance, follower: TrainInstance): void {
     const combinedCars = leader.carCount + follower.carCount;
-    this.scene.remove(follower.mesh);
-    disposeHierarchy(follower.mesh);
+    this.disposeTrainMesh(follower);
 
     // 【バグ修正】両編成の走行履歴（pathHistory）を結合し、追加車両が一点に収縮するのを防ぐ
     if (leader.pathHistory.length > 0 && follower.pathHistory.length > 0) {
@@ -1486,7 +1647,8 @@ export class TrainManager {
     this.audioManager.playCouplingSound(distFactor);
 
     // ④ 併合時の乗客・積荷データの完全引き継ぎ（消滅防止）
-    leader.passengers = Math.min(leader.capacity, leader.passengers + follower.passengers);
+    const leaderMaxCap = getMaxCapacity(leader.model, combinedCars);
+    leader.passengers = Math.min(leaderMaxCap, leader.passengers + follower.passengers);
     if (leader.model.category === 'freight' || follower.model.category === 'freight') {
       leader.cargoCapacity = Math.max(0, (combinedCars - 1) * 3);
       leader.cargoLoad = Math.min(leader.cargoCapacity, (leader.cargoLoad ?? 0) + (follower.cargoLoad ?? 0));
@@ -1600,11 +1762,11 @@ export class TrainManager {
     const { group: rearGroup, cars: rearCars } = ModelFactory.createTrainFormation(train.model, config.rearCars);
     this.scene.add(rearGroup);
 
-    const rearLayer = train.currentTile.layer;
     let rearFrontPos: THREE.Vector3;
     let rearDir: THREE.Vector3;
     let rearTileX: number;
     let rearTileZ: number;
+    let rearLayer: GridLayer = train.currentTile.layer;
     let rearTargetTile: { x: number; z: number; layer: GridLayer };
     const rearHistory: PathSample[] = [];
 
@@ -1616,6 +1778,21 @@ export class TrainManager {
       rearDir = train.direction.clone().negate();
       rearTileX = Math.round(rearFrontPos.x / WorldMap.TILE_SIZE);
       rearTileZ = Math.round(rearFrontPos.z / WorldMap.TILE_SIZE);
+
+      // 新先頭車の物理高さから最適レイヤーを探索
+      rearLayer = (newFrontSample.layer ?? train.currentTile.layer) as GridLayer;
+      let minDiff = Infinity;
+      for (const lyr of GRID_LAYERS) {
+        const t = this.worldMap.getTile(rearTileX, rearTileZ, lyr);
+        if (t && this.isTrackTile(t)) {
+          const h = this.getTileInterpolatedHeight(t, lyr);
+          const diff = Math.abs(h - newFrontSample.pos.y);
+          if (diff < minDiff) {
+            minDiff = diff;
+            rearLayer = lyr;
+          }
+        }
+      }
 
       const next = this.findNextTrackTile(rearTileX, rearTileZ, rearLayer, rearDir, true);
       if (next) {
@@ -1652,7 +1829,28 @@ export class TrainManager {
       rearDir = train.direction.clone();
       rearTileX = Math.round(rearFrontPos.x / WorldMap.TILE_SIZE);
       rearTileZ = Math.round(rearFrontPos.z / WorldMap.TILE_SIZE);
-      rearTargetTile = { ...train.targetTile };
+
+      // 分割点先頭車の物理高さから最適レイヤーを探索
+      rearLayer = (frontSample.layer ?? train.currentTile.layer) as GridLayer;
+      let minDiff = Infinity;
+      for (const lyr of GRID_LAYERS) {
+        const t = this.worldMap.getTile(rearTileX, rearTileZ, lyr);
+        if (t && this.isTrackTile(t)) {
+          const h = this.getTileInterpolatedHeight(t, lyr);
+          const diff = Math.abs(h - frontSample.pos.y);
+          if (diff < minDiff) {
+            minDiff = diff;
+            rearLayer = lyr;
+          }
+        }
+      }
+
+      const next = this.findNextTrackTile(rearTileX, rearTileZ, rearLayer, rearDir, false);
+      if (next) {
+        rearTargetTile = { x: next.x, z: next.z, layer: (next.layer ?? rearLayer) as GridLayer };
+      } else {
+        rearTargetTile = { ...train.targetTile };
+      }
 
       // 履歴は最古（最後尾 k = rearSamples.length - 1）から最新（先頭 k = 0）へ
       let accumDist = 0;
@@ -1737,6 +1935,19 @@ export class TrainManager {
   }
 
   /**
+   * 列車IDを指定して前面展望・カメラ追従ターゲットを取得する
+   */
+  public getFollowTargetByTrainId(trainId: number): FollowTarget | null {
+    const train = this.getTrainById(trainId);
+    if (!train) return null;
+    return {
+      position: train.frontPosition,
+      direction: train.direction,
+      speed: train.isStopped || train.isAtsBraked ? 0 : train.model.maxSpeed
+    };
+  }
+
+  /**
    * 【廃車の不法投棄解消】列車編成メッシュおよび全車両パーツの完全VRAM解放
    * ルートメッシュだけでなく、cars 配列の各車両メッシュ・ジオメトリ・マテリアル・テクスチャを再帰的に破棄
    */
@@ -1754,6 +1965,8 @@ export class TrainManager {
         }
       }
     }
+    train.mesh = undefined as any;
+    train.cars = [];
   }
 
   public removeAllTrains() {
@@ -1802,8 +2015,9 @@ export class TrainManager {
       }
       VehicleMeshBuilder.updateTrainCargoVisual(train.cars, train.cargoLoad ?? 0);
     }
-    if (train.passengers > train.capacity) {
-      train.passengers = train.capacity;
+    const currentMaxCap = getMaxCapacity(train.model, newCarCount);
+    if (train.passengers > currentMaxCap) {
+      train.passengers = currentMaxCap;
     }
 
     // 各車両の位置・向きを走行履歴（pathHistory）からサンプリングして配置（カーブ・勾配・カントに沿って美しく追従）
@@ -1873,11 +2087,11 @@ export class TrainManager {
   }
 
   /**
-   * ⑤ 月次/日次の列車運行維持費を計上する（1両あたり月¥80,000）
+   * ⑤ 月次/日次の列車運行維持費を計上する（各車両モデルの運行維持費×30日分）
    */
   public deductPeriodicOperatingCosts() {
     for (const train of this.trains) {
-      const cost = train.carCount * 80000;
+      const cost = getRunningCostPerDay(train.model, train.carCount) * 30;
       train.totalCost += cost;
       train.monthlyProfit = train.totalRevenue - train.totalCost;
     }
@@ -1914,7 +2128,8 @@ export class TrainManager {
           yaw: h.yaw,
           pitch: h.pitch,
           cant: h.cant,
-          dist: h.dist
+          dist: h.dist,
+          layer: h.layer
         })),
         totalPassengers: t.totalPassengers,
         totalRevenue: t.totalRevenue,
@@ -2028,4 +2243,156 @@ export class TrainManager {
       return false;
     }
   }
+
+  /**
+   * 駅周囲5マス四方の建物（住宅・商業・工業）の発展状況から、乗客発生数を算出する。
+   * 家が3〜4軒程度の小さな集落では十数人〜20人程度、ビル街で100〜200人規模になるよう適正化。
+   */
+  public calculateStationPassengerDemand(
+    centerX: number,
+    centerZ: number,
+    currentHour: number,
+    getDemandMultiplier?: (x: number, z: number, hour: number) => number
+  ): number {
+    let residenceCount = 0;
+    let commercialCount = 0;
+    let industrialCount = 0;
+    let weightedScore = 0;
+
+    // 駅周囲5マス四方（11×11マス）を走査
+    for (let dx = -5; dx <= 5; dx++) {
+      for (let dz = -5; dz <= 5; dz++) {
+        if (dx === 0 && dz === 0) continue;
+        const tx = centerX + dx;
+        const tz = centerZ + dz;
+        const t = this.worldMap.getTile(tx, tz, 1);
+        if (!t) continue;
+
+        const chebyshevDist = Math.max(Math.abs(dx), Math.abs(dz));
+        // 距離減衰: 近いほど駅を利用しやすい (1〜2マス: 1.0, 3マス: 0.85, 4マス: 0.7, 5マス: 0.55)
+        const distWeight = chebyshevDist <= 2 ? 1.0 : (chebyshevDist === 3 ? 0.85 : (chebyshevDist === 4 ? 0.7 : 0.55));
+
+        if (t.type === 'residence') {
+          residenceCount++;
+          // 住宅1軒あたり: 2.5〜4.5人程度（家が3軒なら 8〜14人程度）
+          weightedScore += (2.5 + (t.level ?? 1) * 0.8) * distWeight;
+        } else if (t.type === 'commercial') {
+          commercialCount++;
+          // 商業施設1軒あたり: 4.0〜7.0人程度（買い物・通勤客）
+          weightedScore += (4.0 + (t.level ?? 1) * 1.5) * distWeight;
+        } else if (t.type === 'industrial') {
+          industrialCount++;
+          // 工業1軒あたり: 2.0〜4.0人程度（従業員の通勤）
+          weightedScore += (2.5 + (t.level ?? 1) * 0.8) * distWeight;
+        }
+      }
+    }
+
+    // 周囲に建物が一切ない場合（野原・更地）は乗客発生ほぼゼロ
+    if (residenceCount === 0 && commercialCount === 0 && industrialCount === 0) {
+      return 0;
+    }
+
+    // 時間帯需要倍率の取得（朝夕ラッシュ、日中、深夜）
+    const demandMult = getDemandMultiplier
+      ? getDemandMultiplier(centerX, centerZ, currentHour)
+      : TrainManager.getHourlyDemandMultiplier(currentHour);
+
+    // ±15%のランダムな微小変動
+    const fluctuation = 0.85 + Math.random() * 0.3;
+    const calculated = Math.round(weightedScore * demandMult * fluctuation);
+
+    return Math.max(1, calculated);
+  }
+
+  /**
+   * 全旅客駅の待機乗客数を5分ごとに定期更新
+   * （1時間あたりの発生数を12等分し、5分に1回 1/12 ずつ自然に集客・補充）
+   */
+  public updateFiveMinuteStationPassengers(
+    currentHour: number,
+    getDemandMultiplier?: (x: number, z: number, hour: number) => number
+  ): void {
+    const stations = this.worldMap.stationManager.getStations();
+    for (const st of stations) {
+      if (st.isSignalYard || st.isCargoStation) continue;
+      for (const platform of st.platforms) {
+        if (platform.isSignalYard || platform.isCargoStation || platform.tiles.length === 0) continue;
+        const midIdx = Math.floor(platform.tiles.length / 2);
+        const centerTile = platform.tiles[midIdx];
+        const tileLayer = (centerTile.layer ?? 1) as GridLayer;
+
+        const demand = this.calculateStationPassengerDemand(centerTile.x, centerTile.z, currentHour, getDemandMultiplier);
+        if (demand <= 0) continue;
+
+        // 駅タイルの現在の待機客に補充（最大上限キャップあり）
+        const curTile = this.worldMap.getTile(centerTile.x, centerTile.z, tileLayer);
+        if (!curTile) continue;
+
+        const maxCap = Math.max(10, Math.round(demand * 2.5));
+        const currentWait = curTile.stationPassengers ?? 0;
+
+        // 現在の1時間あたりの増加数（demand の 40%）
+        const hourlyIncremental = Math.max(1, Math.round(demand * 0.4));
+        // 12等分した5分あたりの増加量 (1/12)
+        const fiveMinIncremental = hourlyIncremental / 12;
+
+        // 端数アキュムレータに蓄積
+        curTile.passengerAccumulator = (curTile.passengerAccumulator ?? 0) + fiveMinIncremental;
+
+        // 1人以上蓄積されたら整数部を取り出して待機乗客数に加算
+        const wholePassengers = Math.floor(curTile.passengerAccumulator);
+        if (wholePassengers > 0) {
+          curTile.passengerAccumulator -= wholePassengers;
+          const newWait = Math.min(maxCap, currentWait + wholePassengers);
+          curTile.stationPassengers = newWait;
+
+          for (const t of platform.tiles) {
+            const tData = this.worldMap.getTile(t.x, t.z, (t.layer ?? 1) as GridLayer);
+            if (tData) {
+              tData.stationPassengers = newWait;
+              tData.passengerAccumulator = curTile.passengerAccumulator;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 全旅客駅の待機乗客数を初期設定（ゲーム開始時やマップロード時の初期補充）
+   */
+  public updateHourlyStationPassengers(
+    currentHour: number,
+    getDemandMultiplier?: (x: number, z: number, hour: number) => number
+  ): void {
+    const stations = this.worldMap.stationManager.getStations();
+    for (const st of stations) {
+      if (st.isSignalYard || st.isCargoStation) continue;
+      for (const platform of st.platforms) {
+        if (platform.isSignalYard || platform.isCargoStation || platform.tiles.length === 0) continue;
+        const midIdx = Math.floor(platform.tiles.length / 2);
+        const centerTile = platform.tiles[midIdx];
+        const tileLayer = (centerTile.layer ?? 1) as GridLayer;
+
+        const demand = this.calculateStationPassengerDemand(centerTile.x, centerTile.z, currentHour, getDemandMultiplier);
+        if (demand <= 0) continue;
+
+        const curTile = this.worldMap.getTile(centerTile.x, centerTile.z, tileLayer);
+        if (!curTile) continue;
+
+        const maxCap = Math.max(10, Math.round(demand * 2.5));
+        const currentWait = curTile.stationPassengers ?? 0;
+        const incremental = Math.max(1, Math.round(demand * 0.4));
+        const newWait = Math.min(maxCap, currentWait + incremental);
+
+        curTile.stationPassengers = newWait;
+        for (const t of platform.tiles) {
+          const tData = this.worldMap.getTile(t.x, t.z, (t.layer ?? 1) as GridLayer);
+          if (tData) tData.stationPassengers = newWait;
+        }
+      }
+    }
+  }
 }
+

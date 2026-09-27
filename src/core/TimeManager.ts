@@ -1,9 +1,10 @@
 // わがまちレールウェイ 時間同期タイマーシステム（マスター設計書準拠）
 
-export type SpeedLevel = 0 | 1 | 2 | 3 | 4;
+export type SpeedLevel = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface TimeManagerEvents {
   onMinutePassed?: (year: number, month: number, day: number, hour: number, minute: number) => void;
+  onFiveMinutesPassed?: (hour: number, minute: number) => void;
   onHourPassed?: (hour: number) => void;
   onDayPassed?: (year: number, month: number, day: number) => void;
   onMonthPassed?: (year: number, month: number) => void;
@@ -12,9 +13,9 @@ export interface TimeManagerEvents {
 }
 
 export class TimeManager {
-  // 速度定義: 0=一時停止, 1=等速(1分/秒), 2=3倍速(3分/秒), 3=10倍速(10分/秒), 4=超高速(60分/秒 = 1秒で1時間進む)
-  public static readonly SPEED_MULTIPLIERS = [0, 1, 3, 10, 60] as const;
-  public static readonly MINUTES_PER_SECOND = [0, 1, 3, 10, 60] as const;
+  // 速度定義: 0=一時停止, 1=等速(1分/秒), 2=3倍速(3分/秒), 3=10倍速(10分/秒), 4=超高速(60分/秒 = 1秒で1時間), 5=爆速(720分/秒 = 1秒で12時間進む)
+  public static readonly SPEED_MULTIPLIERS = [0, 1, 3, 10, 60, 720] as const;
+  public static readonly MINUTES_PER_SECOND = [0, 1, 3, 10, 60, 720] as const;
 
   public speedLevel: SpeedLevel = 1;
 
@@ -90,9 +91,14 @@ export class TimeManager {
     this.minuteAccumulatorCompensation = (t - this.minuteAccumulator) - y;
     this.minuteAccumulator = t;
 
-    while (this.minuteAccumulator >= 1.0) {
+    let loopCount = 0;
+    while (this.minuteAccumulator >= 1.0 && loopCount < 720) {
       this.minuteAccumulator -= 1.0;
       this.advanceOneMinute();
+      loopCount++;
+    }
+    if (this.minuteAccumulator > 720) {
+      this.minuteAccumulator = 0;
     }
   }
 
@@ -132,9 +138,13 @@ export class TimeManager {
 
     this.events.onMinutePassed?.(this.year, this.month, this.day, this.hour, this.minute);
 
-    // 毎年 3月31日 23:59 到達イベント（前年度決算・税額確定日）
+    if (this.minute % 5 === 0) {
+      this.events.onFiveMinutesPassed?.(this.hour, this.minute);
+    }
+
+    // 毎年 3月31日 23:59 到達イベント（前年度決算・税額確定日: 4月〜翌3月の年度末のため year - 1 年度）
     if (this.month === 3 && this.day === 31 && this.hour === 23 && this.minute === 59) {
-      this.events.onFiscalYearEnd?.(this.year);
+      this.events.onFiscalYearEnd?.(this.year - 1);
     }
   }
 

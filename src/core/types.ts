@@ -56,6 +56,12 @@ export interface PlatformData {
   isSignalYard: boolean; // 信号場・留置線フラグ
   isCargoStation?: boolean; // 貨物駅・コンテナヤードフラグ
   dailyPassengers: number;
+  previousDayPassengers: number;
+  twoDaysAgoPassengers?: number;
+  dailyLoadedCargo?: number;
+  dailyUnloadedCargo?: number;
+  previousDayLoadedCargo?: number;
+  previousDayUnloadedCargo?: number;
   totalPassengers: number;
   totalRevenue: number;
 }
@@ -68,6 +74,12 @@ export interface StationData {
   isSignalYard: boolean; // 信号場・留置線フラグ
   isCargoStation?: boolean; // 貨物駅フラグ
   dailyPassengers: number;
+  previousDayPassengers: number;
+  twoDaysAgoPassengers?: number;
+  dailyLoadedCargo?: number;
+  dailyUnloadedCargo?: number;
+  previousDayLoadedCargo?: number;
+  previousDayUnloadedCargo?: number;
   totalPassengers: number;
   totalRevenue: number;
   maintenance: number;

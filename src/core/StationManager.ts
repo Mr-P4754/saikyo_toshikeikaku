@@ -10,6 +10,12 @@ export interface PlatformSaveData {
   isSignalYard: boolean;
   isCargoStation?: boolean;
   dailyPassengers: number;
+  previousDayPassengers: number;
+  twoDaysAgoPassengers?: number;
+  dailyLoadedCargo?: number;
+  dailyUnloadedCargo?: number;
+  previousDayLoadedCargo?: number;
+  previousDayUnloadedCargo?: number;
   totalPassengers: number;
   totalRevenue: number;
 }
@@ -22,6 +28,12 @@ export interface StationSaveData {
     isSignalYard: boolean;
     isCargoStation?: boolean;
     dailyPassengers: number;
+    previousDayPassengers: number;
+    twoDaysAgoPassengers?: number;
+    dailyLoadedCargo?: number;
+    dailyUnloadedCargo?: number;
+    previousDayLoadedCargo?: number;
+    previousDayUnloadedCargo?: number;
     totalPassengers: number;
     totalRevenue: number;
     maintenance: number;
@@ -46,7 +58,8 @@ export class StationManager {
    * タイル座標キーを生成
    */
   private makeTileKey(x: number, z: number, layer: GridLayer): string {
-    return `${x},${layer},${z}`;
+    const safeLayer = (layer ?? 1) as GridLayer;
+    return `${x},${safeLayer},${z}`;
   }
 
   /**
@@ -135,6 +148,11 @@ export class StationManager {
         isSignalYard,
         isCargoStation: isCargo,
         dailyPassengers: 0,
+        previousDayPassengers: 0,
+        dailyLoadedCargo: 0,
+        dailyUnloadedCargo: 0,
+        previousDayLoadedCargo: 0,
+        previousDayUnloadedCargo: 0,
         totalPassengers: 0,
         totalRevenue: 0,
         maintenance: baseMaintenance,
@@ -157,6 +175,11 @@ export class StationManager {
       isSignalYard,
       isCargoStation: isCargo,
       dailyPassengers: 0,
+      previousDayPassengers: 0,
+      dailyLoadedCargo: 0,
+      dailyUnloadedCargo: 0,
+      previousDayLoadedCargo: 0,
+      previousDayUnloadedCargo: 0,
       totalPassengers: 0,
       totalRevenue: 0
     };
@@ -337,7 +360,7 @@ export class StationManager {
     if (station.platforms.length === 0) {
       this.stations.delete(station.id);
     } else {
-      const baseMaintenance = station.isSignalYard ? 20000 : 200000;
+      const baseMaintenance = station.isSignalYard ? 20000 : (station.isCargoStation ? 50000 : 200000);
       station.maintenance = station.platforms.length * baseMaintenance;
       station.netProfit = station.totalRevenue - station.maintenance;
     }
@@ -365,13 +388,45 @@ export class StationManager {
   }
 
   /**
-   * 日次（日付変更時）の乗降客数カウンタをリセット
+   * 貨物駅での積み込み・荷下ろし実績と運賃収入を加算
+   */
+  public addCargoRecord(stationId: string, platformId: string, loaded: number, unloaded: number, revenue: number): void {
+    const station = this.stations.get(stationId);
+    if (!station) return;
+
+    const platform = station.platforms.find(p => p.id === platformId);
+    if (platform) {
+      platform.dailyLoadedCargo = (platform.dailyLoadedCargo ?? 0) + loaded;
+      platform.dailyUnloadedCargo = (platform.dailyUnloadedCargo ?? 0) + unloaded;
+      platform.totalRevenue += revenue;
+    }
+
+    station.dailyLoadedCargo = (station.dailyLoadedCargo ?? 0) + loaded;
+    station.dailyUnloadedCargo = (station.dailyUnloadedCargo ?? 0) + unloaded;
+    station.totalRevenue += revenue;
+    station.netProfit = station.totalRevenue - station.maintenance;
+  }
+
+  /**
+   * 日次（日付変更時）の乗降客数・貨物取扱数カウンタを前日に退避してリセット
    */
   public resetDailyPassengers(): void {
     for (const station of this.stations.values()) {
+      station.twoDaysAgoPassengers = station.previousDayPassengers ?? 0;
+      station.previousDayPassengers = station.dailyPassengers;
       station.dailyPassengers = 0;
+      station.previousDayLoadedCargo = station.dailyLoadedCargo ?? 0;
+      station.dailyLoadedCargo = 0;
+      station.previousDayUnloadedCargo = station.dailyUnloadedCargo ?? 0;
+      station.dailyUnloadedCargo = 0;
       for (const platform of station.platforms) {
+        platform.twoDaysAgoPassengers = platform.previousDayPassengers ?? 0;
+        platform.previousDayPassengers = platform.dailyPassengers;
         platform.dailyPassengers = 0;
+        platform.previousDayLoadedCargo = platform.dailyLoadedCargo ?? 0;
+        platform.dailyLoadedCargo = 0;
+        platform.previousDayUnloadedCargo = platform.dailyUnloadedCargo ?? 0;
+        platform.dailyUnloadedCargo = 0;
       }
     }
   }
@@ -399,6 +454,12 @@ export class StationManager {
         isSignalYard: st.isSignalYard,
         isCargoStation: st.isCargoStation,
         dailyPassengers: st.dailyPassengers,
+        previousDayPassengers: st.previousDayPassengers ?? 0,
+        twoDaysAgoPassengers: st.twoDaysAgoPassengers ?? 0,
+        dailyLoadedCargo: st.dailyLoadedCargo ?? 0,
+        dailyUnloadedCargo: st.dailyUnloadedCargo ?? 0,
+        previousDayLoadedCargo: st.previousDayLoadedCargo ?? 0,
+        previousDayUnloadedCargo: st.previousDayUnloadedCargo ?? 0,
         totalPassengers: st.totalPassengers,
         totalRevenue: st.totalRevenue,
         maintenance: st.maintenance,
@@ -413,6 +474,12 @@ export class StationManager {
           isSignalYard: p.isSignalYard,
           isCargoStation: p.isCargoStation,
           dailyPassengers: p.dailyPassengers,
+          previousDayPassengers: p.previousDayPassengers ?? 0,
+          twoDaysAgoPassengers: p.twoDaysAgoPassengers ?? 0,
+          dailyLoadedCargo: p.dailyLoadedCargo ?? 0,
+          dailyUnloadedCargo: p.dailyUnloadedCargo ?? 0,
+          previousDayLoadedCargo: p.previousDayLoadedCargo ?? 0,
+          previousDayUnloadedCargo: p.previousDayUnloadedCargo ?? 0,
           totalPassengers: p.totalPassengers,
           totalRevenue: p.totalRevenue
         }))
@@ -446,6 +513,12 @@ export class StationManager {
           isSignalYard: !!st.isSignalYard,
           isCargoStation: !!st.isCargoStation,
           dailyPassengers: st.dailyPassengers ?? 0,
+          previousDayPassengers: st.previousDayPassengers ?? 0,
+          twoDaysAgoPassengers: st.twoDaysAgoPassengers ?? 0,
+          dailyLoadedCargo: st.dailyLoadedCargo ?? 0,
+          dailyUnloadedCargo: st.dailyUnloadedCargo ?? 0,
+          previousDayLoadedCargo: st.previousDayLoadedCargo ?? 0,
+          previousDayUnloadedCargo: st.previousDayUnloadedCargo ?? 0,
           totalPassengers: st.totalPassengers ?? 0,
           totalRevenue: st.totalRevenue ?? 0,
           maintenance: st.maintenance ?? 0,
@@ -460,10 +533,16 @@ export class StationManager {
               platformNumber: p.platformNumber,
               length: p.length,
               trackAxis: p.trackAxis,
-              tiles: Array.isArray(p.tiles) ? p.tiles.map(t => ({ x: t.x, z: t.z, layer: t.layer })) : [],
+              tiles: Array.isArray(p.tiles) ? p.tiles.map(t => ({ x: t.x, z: t.z, layer: (t.layer ?? 1) as GridLayer })) : [],
               isSignalYard: !!p.isSignalYard,
               isCargoStation: !!p.isCargoStation,
               dailyPassengers: p.dailyPassengers ?? 0,
+              previousDayPassengers: p.previousDayPassengers ?? 0,
+              twoDaysAgoPassengers: p.twoDaysAgoPassengers ?? 0,
+              dailyLoadedCargo: p.dailyLoadedCargo ?? 0,
+              dailyUnloadedCargo: p.dailyUnloadedCargo ?? 0,
+              previousDayLoadedCargo: p.previousDayLoadedCargo ?? 0,
+              previousDayUnloadedCargo: p.previousDayUnloadedCargo ?? 0,
               totalPassengers: p.totalPassengers ?? 0,
               totalRevenue: p.totalRevenue ?? 0
             };

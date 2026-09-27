@@ -25,10 +25,10 @@ export class CityGrowth {
   }
 
   /**
-   * 1日1回、正午（12:00）にまとめて都市を発展させる
+   * 1日1回、正午（12:00以降）にまとめて都市を発展させる（高倍速・フレームスキップ対応）
    */
-  public update(hour: number, minute: number, day: number, onNewBuildings: (popIncrease: number) => void) {
-    if (hour === 12 && minute === 0 && this.lastEvaluatedDay !== day) {
+  public update(hour: number, _minute: number, day: number, onNewBuildings: (popIncrease: number) => void) {
+    if (hour >= 12 && this.lastEvaluatedDay !== day) {
       this.lastEvaluatedDay = day;
       this.evaluateGrowth(onNewBuildings);
     }
@@ -38,10 +38,10 @@ export class CityGrowth {
     const stationGroups = new Map<string, TileData>();
     const allTiles = this.worldMap.getAllTiles();
     for (const t of allTiles) {
-      if (t.type.startsWith('station')) {
+      if (WorldMap.isStationTileType(t.type)) {
         const tLayer = (t.layer ?? 1) as GridLayer;
         const start = this.worldMap.getStationStartTile(t.x, t.z, tLayer) || t;
-        const key = `${start.x}_${start.z}`;
+        const key = `${start.x}_${start.z}_${start.layer ?? 1}`;
         if (!stationGroups.has(key)) {
           stationGroups.set(key, start);
         }
@@ -51,21 +51,69 @@ export class CityGrowth {
     let totalNewPop = 0;
     const GROUND_LAYER: GridLayer = 1;
 
-    if (stationGroups.size > 0) {
-      for (const st of stationGroups.values()) {
-      const agg = this.worldMap.getStationAggregateData(st.x, st.z);
-      const passengers = agg ? agg.totalPassengers : (st.totalPassengers ?? 0);
-      if (passengers <= 0) continue;
+    for (const st of stationGroups.values()) {
+      const agg = this.worldMap.getStationAggregateData(st.x, st.z, (st.layer ?? 1) as GridLayer);
+      const isCargoStation = st.type.startsWith('cargo_station');
 
-      let passengerMultiplier = 0.6;
-      if (passengers >= 1500) passengerMultiplier = 1.8;
-      else if (passengers >= 500) passengerMultiplier = 1.4;
-      else if (passengers >= 100) passengerMultiplier = 1.0;
+      // 直近2日間の利用人数（前日 d1、前々日 d2）
+      let d1 = agg ? agg.previousDayPassengers : (st.previousDayPassengers ?? 0);
+      let d2 = agg ? agg.twoDaysAgoPassengers : (st.twoDaysAgoPassengers ?? 0);
 
-      const radius = passengers >= 500 ? 5 : 4;
-      const maxNewHouses = passengers >= 500 ? 3 : 2; // 少し建築数を増やす
-      let newHousesCount = 0;
-      let newCommercialCount = 0;
+      // ゲーム開始初期などで過去データが未蓄積の場合は、当日の実績や待機乗客で補完
+      const currentActive = agg
+        ? Math.max(agg.dailyPassengers, st.stationPassengers ?? 0)
+        : Math.max(st.dailyPassengers ?? 0, st.stationPassengers ?? 0);
+
+      if (d1 === 0 && d2 === 0) {
+        d1 = currentActive;
+        d2 = currentActive;
+      } else if (d2 === 0) {
+        d2 = d1;
+      }
+
+      // ユーザー要件に基づく「2日続けて」の利用人数判定
+      let maxAllowedLevel = 1;
+      let maxDailyGrowthCount = 2;
+
+      if (isCargoStation) {
+        // 貨物駅（コンテナヤード）: 取扱コンテナ数に応じた上限設定
+        const containers = (agg?.cargoContainers ?? st.cargoContainers ?? 0);
+        if (containers >= 30) {
+          maxAllowedLevel = 3;
+          maxDailyGrowthCount = 4;
+        } else if (containers >= 10) {
+          maxAllowedLevel = 2;
+          maxDailyGrowthCount = 3;
+        } else {
+          maxAllowedLevel = 1;
+          maxDailyGrowthCount = 2;
+        }
+      } else {
+        // 旅客駅: 1日の利用人数が2日続けて〜
+        // ① 10000人以上 ➔ Lv4が上限、建物8つが上限
+        // ② 5000人以上10000人未満 ➔ Lv3が上限、建物6つが上限
+        // ③ 1000人以上5000人未満 ➔ Lv2が上限、建物4つが上限
+        // ④ 1000人未満 ➔ Lv1が上限、建物2つが上限
+        if (d1 >= 10000 && d2 >= 10000) {
+          maxAllowedLevel = 4;
+          maxDailyGrowthCount = 8;
+        } else if (d1 >= 5000 && d2 >= 5000) {
+          maxAllowedLevel = 3;
+          maxDailyGrowthCount = 6;
+        } else if (d1 >= 1000 && d2 >= 1000) {
+          maxAllowedLevel = 2;
+          maxDailyGrowthCount = 4;
+        } else {
+          maxAllowedLevel = 1;
+          maxDailyGrowthCount = 2;
+        }
+      }
+
+      // 駅ごとの影響半径（駅規模に応じて適正化）
+      const radius = maxAllowedLevel >= 3 ? 5 : maxAllowedLevel === 2 ? 4 : 3;
+
+      // その駅周辺で本日「建つ・Lvが上がる」建物の実行数カウンタ（上限に達したら即停止）
+      let developedCount = 0;
 
       const candidateOffsets: { dx: number; dz: number; dist: number }[] = [];
       for (let dx = -radius; dx <= radius; dx++) {
@@ -75,12 +123,15 @@ export class CityGrowth {
           candidateOffsets.push({ dx, dz, dist });
         }
       }
+      // ランダム順に候補地を走査
       for (let i = candidateOffsets.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [candidateOffsets[i], candidateOffsets[j]] = [candidateOffsets[j], candidateOffsets[i]];
       }
 
       for (const { dx, dz, dist } of candidateOffsets) {
+        if (developedCount >= maxDailyGrowthCount) break;
+
         const tx = st.x + dx;
         const tz = st.z + dz;
         const tile = this.worldMap.getTile(tx, tz, GROUND_LAYER);
@@ -97,97 +148,100 @@ export class CityGrowth {
         const commercialZoned = this.zoneManager && this.zoneManager.hasAnyZoneOfType('commercial');
         const zoneHere = this.zoneManager ? this.zoneManager.getZone(tx, tz) : undefined;
 
-        // 【修正】更地タイルの建築ロジック。商業ゾーンならいきなり商業ビルが建つように緩和。
+        // 1. 更地タイルの新規建築（Lv.1）
         if (tile.type === 'empty') {
           const isComZone = zoneHere?.type === 'commercial';
-          const isResZone = zoneHere?.type === 'residential' || (!residentialZoned && !commercialZoned);
+          const isIndZone = zoneHere?.type === 'industrial';
+          const isResZone = zoneHere?.type === 'residential' || (!residentialZoned && !commercialZoned && !isIndZone);
 
-          // 建築確率を少し引き上げ
-          const baseChance = ((radius - dist + 1) / (radius + 1)) * (hasRoadAdjacent ? 0.3 : 0.1);
-          const spawnChance = baseChance * passengerMultiplier;
+          // 駅距離と道路隣接に応じた自然な建築確率（適度なペースに調整）
+          const baseChance = ((radius - dist + 1) / (radius + 1)) * (hasRoadAdjacent ? 0.25 : 0.12);
 
-          if (Math.random() < spawnChance) {
-            if (isComZone && newCommercialCount < 2) {
+          if (Math.random() < baseChance) {
+            if (isComZone) {
               this.worldMap.setTile(tx, tz, 'commercial', 0, 1, 'right', GROUND_LAYER);
-              newCommercialCount++;
-              totalNewPop += Math.floor(Math.random() * 35 + 25);
-            } else if (zoneHere?.type === 'industrial') {
-              // 工業ゾーンも更地から直接工場を建設
-              this.worldMap.setTile(tx, tz, 'industrial', 0, 1, 'right', GROUND_LAYER);
+              developedCount++;
               totalNewPop += Math.floor(Math.random() * 20 + 15);
-            } else if (isResZone && newHousesCount < maxNewHouses) {
+            } else if (isIndZone) {
+              this.worldMap.setTile(tx, tz, 'industrial', 0, 1, 'right', GROUND_LAYER);
+              developedCount++;
+              totalNewPop += Math.floor(Math.random() * 15 + 10);
+            } else if (isResZone) {
               this.worldMap.setTile(tx, tz, 'residence', 0, 1, 'right', GROUND_LAYER);
-              newHousesCount++;
+              developedCount++;
               totalNewPop += Math.floor(Math.random() * 15 + 10);
             }
           }
         }
-        else if (tile.type === 'residence' && dist <= 2.2 && passengers >= 50 && newCommercialCount < 1) {
-          // 【緩和】既存住宅からの商業アップグレード条件の乗客数を 100人 → 50人 に緩和
-          const allowedByZone = !commercialZoned || zoneHere?.type === 'commercial';
-          if (allowedByZone) {
-            const commercialChance = (passengers >= 500 ? 0.15 : 0.08);
-            if (Math.random() < commercialChance) {
-              const newLvl = Math.min(4, tile.level + 1);
-              this.worldMap.setTile(tx, tz, 'commercial', 0, newLvl, 'right', GROUND_LAYER);
-              newCommercialCount++;
-              totalNewPop += Math.floor(Math.random() * 35 + 25);
+        // 2. 既存住宅タイルの処理（商業への転換 または 住宅自身のレベルアップ）
+        else if (tile.type === 'residence') {
+          let actionTaken = false;
+
+          // 駅至近の住宅が商業へ転換（駅直近かつ商業ゾーン、または未ゾーニング時）
+          if (dist <= 2.0 && maxAllowedLevel >= 2 && developedCount < maxDailyGrowthCount) {
+            const allowedByZone = !commercialZoned || zoneHere?.type === 'commercial';
+            if (allowedByZone && Math.random() < 0.15) {
+              // 商業Lvも maxAllowedLevel を上限とする
+              const nextLvl = Math.min(maxAllowedLevel, tile.level);
+              this.worldMap.setTile(tx, tz, 'commercial', 0, nextLvl, 'right', GROUND_LAYER);
+              developedCount++;
+              totalNewPop += Math.floor(Math.random() * 25 + 20);
+              actionTaken = true;
+            }
+          }
+
+          // 商業に転換しなかった住宅のレベルアップ
+          // 【最重要】tile.level < maxAllowedLevel の場合のみレベルアップ許可！
+          if (!actionTaken && tile.level < maxAllowedLevel && developedCount < maxDailyGrowthCount) {
+            // 立地条件（道路隣接や距離、ゾーン指定）
+            const canUpgrade =
+              (tile.level === 1 && (dist <= 4.0 || zoneHere?.type === 'residential')) ||
+              (tile.level === 2 && dist <= 3.5 && (hasRoadAdjacent || zoneHere?.type === 'residential')) ||
+              (tile.level === 3 && dist <= 2.5 && hasRoadAdjacent);
+
+            if (canUpgrade) {
+              const upgradeChance = ((radius - dist + 1) / (radius + 1)) * 0.25;
+              if (Math.random() < Math.max(0.1, upgradeChance)) {
+                const nextLevel = tile.level + 1;
+                this.worldMap.setTile(tx, tz, 'residence', tile.rotation, nextLevel, 'right', GROUND_LAYER);
+                developedCount++;
+                const popGains = [0, 15, 30, 60, 100];
+                totalNewPop += popGains[nextLevel] || 25;
+              }
             }
           }
         }
+        // 3. 既存商業ビルのレベルアップ
+        else if (tile.type === 'commercial') {
+          // 【最重要】tile.level < maxAllowedLevel の場合のみレベルアップ許可！
+          if (tile.level < maxAllowedLevel && developedCount < maxDailyGrowthCount) {
+            const canUpgrade =
+              (tile.level === 1 && dist <= 4.0) ||
+              (tile.level === 2 && dist <= 3.2 && (hasRoadAdjacent || zoneHere?.type === 'commercial')) ||
+              (tile.level === 3 && dist <= 2.2 && hasRoadAdjacent);
 
-        if (newHousesCount >= maxNewHouses && newCommercialCount >= 2) break;
-      }
-    }
-  }
-
-    if (this.zoneManager) {
-      for (const t of allTiles) {
-        if ((t.layer ?? 1) !== 1) continue;
-        const zone = this.zoneManager.getZone(t.x, t.z);
-
-        // 商業ビルの発展
-        if (t.type === 'commercial' && zone?.type === 'commercial') {
-          const targetLevel = zone.commercialAttractiveness >= 70 ? 4 : zone.commercialAttractiveness >= 35 ? 3 : zone.commercialAttractiveness >= 10 ? 2 : 1;
-          if (targetLevel > t.level && Math.random() < 0.5) { // アップグレード確率向上
-            this.worldMap.setTile(t.x, t.z, 'commercial', t.rotation, targetLevel, 'right', GROUND_LAYER);
-            totalNewPop += Math.floor(Math.random() * 20 + 10);
+            if (canUpgrade) {
+              const upgradeChance = ((radius - dist + 1) / (radius + 1)) * 0.22;
+              if (Math.random() < Math.max(0.1, upgradeChance)) {
+                const nextLevel = tile.level + 1;
+                this.worldMap.setTile(tx, tz, 'commercial', tile.rotation, nextLevel, 'right', GROUND_LAYER);
+                developedCount++;
+                const popGains = [0, 20, 40, 70, 120];
+                totalNewPop += popGains[nextLevel] || 30;
+              }
+            }
           }
         }
-
-        // 工業施設の発展
-        if (t.type === 'industrial' && zone?.type === 'industrial') {
-          // 日々の生産・稼働活動による工業ストック（industrialStock）の蓄積
-          this.zoneManager.addIndustrialStock(zone, 1);
-          const targetLevel = zone.industrialStock >= 35 ? 3 : zone.industrialStock >= 15 ? 2 : 1;
-          if (targetLevel > t.level && Math.random() < 0.35) {
-            this.worldMap.setTile(t.x, t.z, 'industrial', t.rotation, targetLevel, 'right', GROUND_LAYER);
-            totalNewPop += Math.floor(Math.random() * 25 + 15);
+        // 4. 既存工業施設のレベルアップ
+        else if (tile.type === 'industrial') {
+          if (tile.level < Math.min(3, maxAllowedLevel) && developedCount < maxDailyGrowthCount) {
+            if (Math.random() < 0.15) {
+              const nextLevel = tile.level + 1;
+              this.worldMap.setTile(tx, tz, 'industrial', tile.rotation, nextLevel, 'right', GROUND_LAYER);
+              developedCount++;
+              totalNewPop += Math.floor(Math.random() * 20 + 15);
+            }
           }
-        }
-      }
-
-      // 駅遠方でも道路または線路インフラにアクセス可能な工業ゾーンの自動建設
-      for (const zone of this.zoneManager.getAllZones()) {
-        if (zone.type !== 'industrial') continue;
-        const tile = this.worldMap.getTile(zone.x, zone.z, GROUND_LAYER);
-        if (!tile || tile.type !== 'empty') continue;
-
-        if (this.gridManager) {
-          if (this.gridManager.isWaterAtGroundLevel(zone.x, zone.z)) continue;
-          const cell = this.gridManager.getCell(zone.x, 1, zone.z);
-          if (cell && cell.elevation > 1) continue;
-        }
-
-        const hasRoadOrTrack =
-          this.hasNeighborOfType(zone.x, zone.z, 'road', GROUND_LAYER) ||
-          this.hasNeighborOfType(zone.x, zone.z, 'rail', GROUND_LAYER) ||
-          this.hasNeighborOfType(zone.x, zone.z, 'cargo_station', GROUND_LAYER) ||
-          this.hasNeighborOfType(zone.x, zone.z, 'station', GROUND_LAYER);
-
-        if (hasRoadOrTrack && Math.random() < 0.15) {
-          this.worldMap.setTile(zone.x, zone.z, 'industrial', 0, 1, 'right', GROUND_LAYER);
-          totalNewPop += Math.floor(Math.random() * 20 + 10);
         }
       }
     }

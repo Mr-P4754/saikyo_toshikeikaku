@@ -113,12 +113,12 @@ export class ModelFactory {
     return StructureMeshBuilder.createRoad(rotation);
   }
 
-  public static createHouse(type: number = 0): THREE.Group {
-    return StructureMeshBuilder.createHouse(type);
+  public static createHouse(type: number = 0, level: number = 1): THREE.Group {
+    return StructureMeshBuilder.createHouse(type, level);
   }
 
-  public static createCommercialBuilding(floors: number = 4): THREE.Group {
-    return StructureMeshBuilder.createCommercialBuilding(floors);
+  public static createCommercialBuilding(level: number = 1): THREE.Group {
+    return StructureMeshBuilder.createCommercialBuilding(level);
   }
 
   public static createIndustrialBuilding(level: number = 1): THREE.Group {

@@ -233,13 +233,13 @@ export class CameraManager {
       if (this.viewMode === 'quarter_view') {
         this.target.lerp(this.trackingTarget.position, 0.08);
       } else if (this.viewMode === 'cab_view') {
-        // 前面展望視点
+        // 前面展望視点（先頭車前面マスクよりわずかに前方・運転席アイポイントに配置し、自車の映り込み横線を根絶）
         const pos = this.trackingTarget.position;
         const dir = this.trackingTarget.direction || new THREE.Vector3(0, 0, 1);
         this.perspectiveCamera.position.set(
-          pos.x + dir.x * 0.8,
-          pos.y + 1.1,
-          pos.z + dir.z * 0.8
+          pos.x + dir.x * 1.05,
+          pos.y + 0.95,
+          pos.z + dir.z * 1.05
         );
         const lookTarget = new THREE.Vector3().addVectors(this.perspectiveCamera.position, dir);
         this.perspectiveCamera.lookAt(lookTarget);

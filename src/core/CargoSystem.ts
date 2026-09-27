@@ -49,8 +49,8 @@ export class CargoSystem {
           if (zCell && zCell.type === targetType) {
             return true;
           }
-          // 施設タイルチェック
-          const tData = worldMap.getTile(tx, tz, (st.layer ?? layer) as GridLayer);
+          // 施設タイルチェック（同階層施設または地上1F施設）
+          const tData = worldMap.getTile(tx, tz, (st.layer ?? layer) as GridLayer) || worldMap.getTile(tx, tz, 1);
           if (tData && tData.type === targetType) {
             return true;
           }
@@ -77,13 +77,14 @@ export class CargoSystem {
     }>();
 
     for (const t of allTiles) {
-      if (t.type.startsWith('cargo_station') && t.stationGroupId) {
-        if (!cargoStationGroups.has(t.stationGroupId)) {
+      if (t.type.startsWith('cargo_station')) {
+        const groupId = t.stationGroupId || `${t.x},${t.z},${t.layer ?? 1}`;
+        if (!cargoStationGroups.has(groupId)) {
           const stTiles = worldMap.getStationTiles(t.x, t.z, (t.layer ?? 1) as GridLayer);
           const start = worldMap.getStationStartTile(t.x, t.z, (t.layer ?? 1) as GridLayer) || t;
           const isInd = this.isStationInArea(worldMap, t.x, t.z, 'industrial', (t.layer ?? 1) as GridLayer);
 
-          cargoStationGroups.set(t.stationGroupId, {
+          cargoStationGroups.set(groupId, {
             startTile: start,
             tiles: stTiles,
             isIndustrial: isInd

@@ -1,4 +1,4 @@
-import { StationSchedule, StationActionMode, isMinuteInZone } from '../simulation/WorldMap';
+import { StationSchedule, StationActionMode, TimeZoneRule, isMinuteInZone } from '../simulation/WorldMap';
 export { isMinuteInZone };
 
 export interface ArrivalDecision {
@@ -20,33 +20,38 @@ export function resolveArrival(schedule: StationSchedule | undefined, hour: numb
   if (!schedule) return { mode: 'hold', requiredStopMinutes: 0 };
   const currentMin = hour * 60 + minute;
 
+  // 駅全体の折り返し設定の有無を確認（ピンまたはゾーンのいずれかに折り返しがあれば初期折り返し候補とする）
+  const hasPinReverse = !!(schedule.reverseDepartures && schedule.reverseDepartures.length > 0);
+  const anyZoneReverse = (schedule.timeZones || []).some(z => z.isReverse);
+  const defaultReverse = hasPinReverse || anyZoneReverse;
+
   // 現在時刻に合致するすべてのゾーンを抽出
   const activeZones = (schedule.timeZones || []).filter(z => isMinuteInZone(currentMin, z.startMin, z.endMin));
 
   if (activeZones.length === 0) {
-    return { mode: 'hold', requiredStopMinutes: 0 };
+    return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse };
   }
 
   // 1. 通過ゾーンがあれば通過優先
   const passZone = activeZones.find(z => z.mode === 'pass');
   if (passZone) {
-    return { mode: 'pass', requiredStopMinutes: 0, isReverse: !!passZone.isReverse };
+    return { mode: 'pass', requiredStopMinutes: 0, isReverse: !!passZone.isReverse || defaultReverse };
   }
 
   // 2. パターンダイヤゾーンがあれば待機（発車分まで停車）
   const patternZones = activeZones.filter(z => z.mode === 'pattern');
   if (patternZones.length > 0) {
     const anyReverse = patternZones.some(z => z.isReverse);
-    return { mode: 'wait', requiredStopMinutes: 0, isReverse: anyReverse };
+    return { mode: 'wait', requiredStopMinutes: 0, isReverse: anyReverse || defaultReverse };
   }
 
   // 3. 停車時間指定ゾーン
   const stopZone = activeZones.find(z => z.mode === 'stop');
   if (stopZone) {
-    return { mode: 'stop', requiredStopMinutes: stopZone.waitMinutes || 1, isReverse: !!stopZone.isReverse };
+    return { mode: 'stop', requiredStopMinutes: stopZone.waitMinutes || 1, isReverse: !!stopZone.isReverse || defaultReverse };
   }
 
-  return { mode: 'hold', requiredStopMinutes: 0 };
+  return { mode: 'hold', requiredStopMinutes: 0, isReverse: defaultReverse };
 }
 
 /**
@@ -57,29 +62,109 @@ export function isMinuteInRange(prevTotalMin: number, currentTotalMin: number, t
     return targetMin === currentTotalMin;
   }
   const diff = (currentTotalMin - prevTotalMin + 1440) % 1440;
-  // 12時間（720分）以上のワープは不自然なので完全一致にフォールバック
-  if (diff > 720) {
-    return targetMin === currentTotalMin;
+  // 1日（1440分）以上進んだ場合は全分が含まれるため常にtrue
+  if (diff === 0 || diff >= 1439) {
+    return true;
   }
   const targetOffset = (targetMin - prevTotalMin + 1440) % 1440;
   return targetOffset > 0 && targetOffset <= diff;
 }
 
 /**
+ * 基準分（baseMinute）と発車間隔（intervalMinutes）に基づくパターン発車が、
+ * 前フレーム（prevTotalMin）から現在フレーム（currentTotalMin）の区間に1回以上含まれるかを判定
+ */
+export function isPatternIntervalInRange(
+  prevTotalMin: number,
+  currentTotalMin: number,
+  baseMinute: number,
+  intervalMinutes: number
+): boolean {
+  const interval = Math.max(1, intervalMinutes || 60);
+  const base = ((baseMinute % 60) + 60) % 60;
+
+  if (prevTotalMin === currentTotalMin) {
+    const minFromBase = ((currentTotalMin - base) % interval + interval) % interval;
+    return minFromBase === 0;
+  }
+
+  const diff = (currentTotalMin - prevTotalMin + 1440) % 1440;
+  // 進行差分が間隔以上、または半日（720分）以上の場合は確実に跨いでいる
+  if (diff >= interval || diff >= 720) {
+    return true;
+  }
+
+  const offset = ((prevTotalMin - base) % interval + interval) % interval;
+  const distToNext = (interval - offset) % interval;
+  const nextTargetOffset = distToNext === 0 ? interval : distToNext;
+  return nextTargetOffset <= diff;
+}
+
+/**
  * 毎時XX分（0-59分）が前フレームからの進行区間内に1回以上通過したかを判定（時跨ぎ・フレームスキップ対応）
  */
 export function isPatternMinuteInRange(prevTotalMin: number, currentTotalMin: number, patternMinute: number): boolean {
-  if (prevTotalMin === currentTotalMin) {
-    return (currentTotalMin % 60) === patternMinute;
+  return isPatternIntervalInRange(prevTotalMin, currentTotalMin, patternMinute, 60);
+}
+
+/**
+ * 時間帯ゾーン [startMin, endMin] が、前フレーム時刻 prevMin から現フレーム時刻 currentMin までの
+ * 進行区間と交差（オーバーラップ）しているかを判定（日跨ぎ・フレームスキップ・極超高速対応）
+ */
+export function isZoneIntersectingRange(
+  prevMin: number,
+  currentMin: number,
+  startMin: number,
+  endMin: number
+): boolean {
+  if (prevMin === currentMin) {
+    return isMinuteInZone(currentMin, startMin, endMin);
   }
-  const diff = (currentTotalMin - prevTotalMin + 1440) % 1440;
-  if (diff >= 60 || diff > 720) {
-    // 60分以上スキップした場合は毎時全分を通過済み
+  const diff = (currentMin - prevMin + 1440) % 1440;
+  // 12時間（720分）以上進んだ場合は確実に全時間帯と交差する
+  if (diff >= 720) return true;
+
+  // 現在時刻か前時刻がゾーン内にある
+  if (isMinuteInZone(currentMin, startMin, endMin) || isMinuteInZone(prevMin, startMin, endMin)) {
     return true;
   }
-  const startMinInHour = prevTotalMin % 60;
-  const targetOffset = (patternMinute - startMinInHour + 60) % 60;
-  return targetOffset > 0 && targetOffset <= diff;
+  // ゾーンの開始点または終了点をこのフレームで跨いだ
+  if (isMinuteInRange(prevMin, currentMin, startMin) || isMinuteInRange(prevMin, currentMin, endMin)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * パターンダイヤ時間帯ゾーン内の全発車時刻（分単位: 0-1439）を計算して返却
+ */
+export function getPatternDepartureMinutes(zone: TimeZoneRule): number[] {
+  const departures: number[] = [];
+  const interval = Math.max(1, zone.patternIntervalMinutes ?? 60);
+  const baseMin = (zone.patternMinute ?? (zone.startMin % 60)) % 60;
+
+  // startMin の属する hour での baseMin
+  const startHour = Math.floor(zone.startMin / 60);
+  let firstDep = startHour * 60 + baseMin;
+  while (firstDep < zone.startMin) {
+    firstDep += interval;
+  }
+
+  let current = firstDep;
+  const maxLimit = 1440 * 2;
+  let step = 0;
+
+  while (step < maxLimit) {
+    const wrapped = ((current % 1440) + 1440) % 1440;
+    if (!isMinuteInZone(wrapped, zone.startMin, zone.endMin)) {
+      break;
+    }
+    departures.push(wrapped);
+    current += interval;
+    step++;
+  }
+
+  return departures;
 }
 
 /**
@@ -115,10 +200,9 @@ export function evaluateStationDeparture(
     }
   }
 
-  // 2. 現在時刻（または通過区間）に一致する全時間帯ゾーンを収集
+  // 2. 現在時刻（または通過区間）に一致する全時間帯ゾーンを収集（極超高速でのゾーン跨ぎに対応）
   const activeZones = (schedule.timeZones || []).filter(z =>
-    isMinuteInZone(currentMin, z.startMin, z.endMin) ||
-    (prevMin !== currentMin && isMinuteInZone(prevMin, z.startMin, z.endMin))
+    isZoneIntersectingRange(prevMin, currentMin, z.startMin, z.endMin)
   );
 
   if (activeZones.length > 0) {
@@ -128,11 +212,12 @@ export function evaluateStationDeparture(
       return { canDepart: true, shouldReverse: !!passZone.isReverse || initialReverse };
     }
 
-    // 2-b. パターンダイヤゾーン: フレームスキップによる分飛びを許容し、区間内に合致するものを全探索
+    // 2-b. パターンダイヤゾーン: 数学的に区間内跨ぎを正確に探索
     const matchedPattern = activeZones.find(z => {
       if (z.mode !== 'pattern') return false;
-      const patMin = z.patternMinute ?? 0;
-      return isPatternMinuteInRange(prevMin, currentMin, patMin);
+      const patMin = z.patternMinute ?? (z.startMin % 60);
+      const interval = z.patternIntervalMinutes ?? 60;
+      return isPatternIntervalInRange(prevMin, currentMin, patMin, interval);
     });
     if (matchedPattern) {
       return { canDepart: true, shouldReverse: !!matchedPattern.isReverse || initialReverse };
@@ -148,12 +233,12 @@ export function evaluateStationDeparture(
     const hasPattern = activeZones.some(z => z.mode === 'pattern');
     const hasStop = activeZones.some(z => z.mode === 'stop');
     if (hasPattern || hasStop) {
-      return { canDepart: false, shouldReverse: false };
+      return { canDepart: false, shouldReverse: initialReverse };
     }
   }
 
   // 3. 到着時モードに基づくフォールバック判定
-  if (initialMode === 'stop' && initialRequiredStopMinutes > 0) {
+  if (initialMode === 'stop') {
     if (stopElapsedMinutes >= initialRequiredStopMinutes) {
       return { canDepart: true, shouldReverse: initialReverse };
     }
@@ -166,7 +251,8 @@ export function evaluateStationDeparture(
     }
   }
 
-  return { canDepart: false, shouldReverse: false };
+  // 発車条件未達の場合でも、駅進入時に決定されていた初期折り返しフラグ（initialReverse）を保持
+  return { canDepart: false, shouldReverse: initialReverse };
 }
 
 /**

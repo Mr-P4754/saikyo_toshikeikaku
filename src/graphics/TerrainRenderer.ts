@@ -107,6 +107,7 @@ export class TerrainRenderer {
       for (const [key, group] of this.chunkGroups.entries()) {
         if (!visibleKeys.has(key)) {
           this.terrainGroup.remove(group);
+          this.disposeChunkGroup(group);
           this.chunkGroups.delete(key);
           if (this.chunkGroups.size <= MAX_CACHED_CHUNKS) {
             break;
@@ -198,13 +199,8 @@ export class TerrainRenderer {
    */
   public clear(scene: THREE.Scene): void {
     for (const group of this.chunkGroups.values()) {
-      group.traverse(obj => {
-        const inst = obj as THREE.InstancedMesh;
-        if ((inst as any).isInstancedMesh) {
-          inst.geometry.dispose();
-        }
-      });
       this.terrainGroup.remove(group);
+      this.disposeChunkGroup(group);
     }
     this.chunkGroups.clear();
     scene.remove(this.terrainGroup);
@@ -246,12 +242,7 @@ export class TerrainRenderer {
     const existing = this.chunkGroups.get(key);
     if (existing) {
       this.terrainGroup.remove(existing);
-      existing.traverse(obj => {
-        const inst = obj as THREE.InstancedMesh;
-        if ((inst as any).isInstancedMesh) {
-          inst.geometry.dispose();
-        }
-      });
+      this.disposeChunkGroup(existing);
       this.chunkGroups.delete(key);
     }
     const chunk = gridManager.ensureChunk(cx, cz);
@@ -279,5 +270,30 @@ export class TerrainRenderer {
       const cz = parseInt(czStr, 10);
       this.rebuildChunk(cx, cz, gridManager, _scene);
     }
+  }
+
+  /**
+   * 地形レンダラー全体の破棄（共有ジオメトリ・マテリアルのGPUリソース完全解放）
+   */
+  public dispose(scene?: THREE.Scene): void {
+    if (scene) {
+      this.clear(scene);
+    }
+    this.boxGeo.dispose();
+    this.planeGeo.dispose();
+    this.mountainTopMat.dispose();
+    this.mountainSideMat.dispose();
+    this.waterMat.dispose();
+  }
+
+  /**
+   * チャンク内の InstancedMesh インスタンスバッファを安全に解放
+   */
+  private disposeChunkGroup(group: THREE.Group): void {
+    group.traverse((child) => {
+      if ((child as any).isInstancedMesh && typeof (child as any).dispose === 'function') {
+        (child as THREE.InstancedMesh).dispose();
+      }
+    });
   }
 }

@@ -1,4 +1,5 @@
 import { WorldMap, TileData, SwitchSchedule, SwitchTimeZoneRule, createDefaultSwitchSchedule } from '../simulation/WorldMap';
+import { GridLayer } from '../core/types';
 
 export type DeviceMode = 'desktop' | 'mobile';
 
@@ -196,7 +197,8 @@ export class SwitchScheduleUI {
 
   public refreshOrClose(): void {
     if (!this.currentTile) return;
-    const still = this.worldMap.getTile(this.currentTile.x, this.currentTile.z);
+    const lyr = (this.currentTile.layer ?? 1) as GridLayer;
+    const still = this.worldMap.getTile(this.currentTile.x, this.currentTile.z, lyr);
     if (!still) this.close();
     else {
       this.currentTile = still;

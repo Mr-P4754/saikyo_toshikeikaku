@@ -39,65 +39,212 @@ export class StructureMeshBuilder {
   }
 
   /**
-   * 戸建て住宅
+   * 住宅系建築物（Lv.1 戸建て, Lv.2 低層アパート, Lv.3 中層マンション, Lv.4 高層タワーマンション）
    */
-  public static createHouse(type: number = 0): THREE.Group {
+  public static createHouse(type: number = 0, level: number = 1): THREE.Group {
     const group = new THREE.Group();
+    const safeLevel = Math.max(1, Math.min(4, level));
     const wallMat = GameMaterials.wallMats[type % (GameMaterials.wallMats.length - 1)];
     const roofMat = GameMaterials.roofMats[type % GameMaterials.roofMats.length];
 
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.1, 1.3), wallMat);
-    body.position.y = 0.55;
-    body.castShadow = true;
-    group.add(body);
+    if (safeLevel === 1) {
+      // Lv.1: 戸建て住宅
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.1, 1.3), wallMat);
+      body.position.y = 0.55;
+      body.castShadow = true;
+      group.add(body);
 
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.65, 4), roofMat);
-    roof.position.y = 1.425;
-    roof.rotation.y = Math.PI / 4;
-    roof.castShadow = true;
-    group.add(roof);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.65, 4), roofMat);
+      roof.position.y = 1.425;
+      roof.rotation.y = Math.PI / 4;
+      roof.castShadow = true;
+      group.add(roof);
 
-    const winGeo = new THREE.PlaneGeometry(0.25, 0.3);
-    const win1 = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
-    win1.position.set(0.3, 0.6, 0.655);
-    group.add(win1);
+      const winGeo = new THREE.PlaneGeometry(0.25, 0.3);
+      const win1 = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+      win1.position.set(0.3, 0.6, 0.655);
+      group.add(win1);
 
-    const win2 = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
-    win2.position.set(-0.3, 0.6, 0.655);
-    group.add(win2);
+      const win2 = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+      win2.position.set(-0.3, 0.6, 0.655);
+      group.add(win2);
+    } else if (safeLevel === 2) {
+      // Lv.2: 2階建てモダンアパート・集合住宅
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.8, 1.4), GameMaterials.wallMats[0]);
+      body.position.y = 0.9;
+      body.castShadow = true;
+      group.add(body);
+
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(1.56, 0.12, 1.46), roofMat);
+      roof.position.y = 1.86;
+      group.add(roof);
+
+      const winGeo = new THREE.PlaneGeometry(0.28, 0.35);
+      for (const y of [0.55, 1.3]) {
+        for (const x of [-0.45, 0, 0.45]) {
+          const winF = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winF.position.set(x, y, 0.705);
+          group.add(winF);
+
+          const winB = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winB.position.set(x, y, -0.705);
+          winB.rotation.y = Math.PI;
+          group.add(winB);
+        }
+      }
+
+      // 玄関ポーチ
+      const porch = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.3), GameMaterials.concreteMat);
+      porch.position.set(0, 0.04, 0.8);
+      group.add(porch);
+    } else if (safeLevel === 3) {
+      // Lv.3: 中層マンション（5〜6階建て規模）
+      const height = 3.4;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, height, 1.6), GameMaterials.wallMats[3]);
+      body.position.y = height / 2;
+      body.castShadow = true;
+      group.add(body);
+
+      // バルコニーライン（各階の水平アクセント）
+      const winGeo = new THREE.PlaneGeometry(0.26, 0.36);
+      for (let y = 0.6; y < height - 0.4; y += 0.65) {
+        // バルコニー手すり
+        const balcony = new THREE.Mesh(new THREE.BoxGeometry(1.64, 0.12, 0.2), GameMaterials.concreteMat);
+        balcony.position.set(0, y - 0.15, 0.82);
+        group.add(balcony);
+
+        for (const x of [-0.5, 0, 0.5]) {
+          const winF = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winF.position.set(x, y, 0.805);
+          group.add(winF);
+
+          const winB = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winB.position.set(x, y, -0.805);
+          winB.rotation.y = Math.PI;
+          group.add(winB);
+        }
+      }
+
+      // 屋上貯水槽
+      const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.4, 8), GameMaterials.concreteMat);
+      tank.position.set(0.3, height + 0.2, -0.2);
+      group.add(tank);
+    } else {
+      // Lv.4: 高層タワーマンション（10階建て規模）
+      const height = 5.8;
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(1.6, height, 1.6), GameMaterials.wallMats[0]);
+      tower.position.y = height / 2;
+      tower.castShadow = true;
+      group.add(tower);
+
+      // コーナーストライプ（高層ビルの垂直アクセント）
+      const stripeMat = GameMaterials.wallMats[4];
+      const stripeL = new THREE.Mesh(new THREE.BoxGeometry(0.15, height, 0.15), stripeMat);
+      stripeL.position.set(-0.75, height / 2, 0.75);
+      group.add(stripeL);
+      const stripeR = new THREE.Mesh(new THREE.BoxGeometry(0.15, height, 0.15), stripeMat);
+      stripeR.position.set(0.75, height / 2, 0.75);
+      group.add(stripeR);
+
+      // 格子窓
+      const winGeo = new THREE.PlaneGeometry(0.22, 0.32);
+      for (let y = 0.55; y < height - 0.4; y += 0.55) {
+        for (const x of [-0.45, 0, 0.45]) {
+          const winF = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winF.position.set(x, y, 0.805);
+          group.add(winF);
+
+          const winB = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winB.position.set(x, y, -0.805);
+          winB.rotation.y = Math.PI;
+          group.add(winB);
+        }
+      }
+
+      // 屋上ヘリポート・設備タワー
+      const heliPad = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.15, 1.2), GameMaterials.concreteMat);
+      heliPad.position.set(0, height + 0.08, 0);
+      group.add(heliPad);
+      const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.6, 6), GameMaterials.poleMat);
+      beacon.position.set(0, height + 0.45, 0);
+      group.add(beacon);
+    }
 
     return group;
   }
 
   /**
-   * 商業ビル・オフィスビル
+   * 商業ビル・オフィスビル（Lv.1 個人商店・低層店舗, Lv.2 中型テナントビル, Lv.3 大型オフィスビル, Lv.4 超高層ランドマークタワー）
    */
-  public static createCommercialBuilding(floors: number = 4): THREE.Group {
+  public static createCommercialBuilding(level: number = 1): THREE.Group {
     const group = new THREE.Group();
-    const height = Math.min(floors * 0.75, 5.5);
+    const safeLevel = Math.max(1, Math.min(4, level));
 
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(1.5, height, 1.5), GameMaterials.wallMats[4]);
-    tower.position.y = height / 2;
-    tower.castShadow = true;
-    group.add(tower);
+    // レベルに応じた建物の高さ
+    const heightMap = [1.6, 2.8, 4.6, 6.8];
+    const height = heightMap[safeLevel - 1];
 
-    const winGeo = new THREE.PlaneGeometry(0.22, 0.32);
-    for (let f = 0.5; f < height - 0.4; f += 0.7) {
-      for (const x of [-0.45, 0, 0.45]) {
-        const winF = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
-        winF.position.set(x, f, 0.755);
-        group.add(winF);
+    if (safeLevel === 1) {
+      // Lv.1: 小型店舗・個人商店・カフェ
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.4, height, 1.4), GameMaterials.wallMats[1]);
+      body.position.y = height / 2;
+      body.castShadow = true;
+      group.add(body);
 
-        const winB = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
-        winB.position.set(x, f, -0.755);
-        winB.rotation.y = Math.PI;
-        group.add(winB);
+      // 1F ショーウィンドウ（大型ガラス）
+      const shopWin = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.6), GameMaterials.windowDayMat);
+      shopWin.position.set(0, 0.5, 0.705);
+      group.add(shopWin);
+
+      // 商店ひさし（オーニング）
+      const awning = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.08, 0.35), GameMaterials.roofMats[1]);
+      awning.position.set(0, 0.9, 0.8);
+      group.add(awning);
+
+      // 2F窓
+      const win2F = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 0.35), GameMaterials.windowDayMat);
+      win2F.position.set(0, 1.25, 0.705);
+      group.add(win2F);
+    } else {
+      // Lv.2〜Lv.4: オフィスビル・高層ビル
+      const mainMat = safeLevel >= 3 ? GameMaterials.wallMats[4] : GameMaterials.wallMats[3];
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(1.5, height, 1.5), mainMat);
+      tower.position.y = height / 2;
+      tower.castShadow = true;
+      group.add(tower);
+
+      const winGeo = new THREE.PlaneGeometry(0.24, 0.34);
+      for (let f = 0.5; f < height - 0.4; f += 0.68) {
+        for (const x of [-0.45, 0, 0.45]) {
+          const winF = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winF.position.set(x, f, 0.755);
+          group.add(winF);
+
+          const winB = new THREE.Mesh(winGeo, GameMaterials.windowDayMat);
+          winB.position.set(x, f, -0.755);
+          winB.rotation.y = Math.PI;
+          group.add(winB);
+        }
+      }
+
+      // 屋上設備（エアコン室外機、アンテナ塔）
+      const ac = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.5), GameMaterials.concreteMat);
+      ac.position.set(0.3, height + 0.15, 0.3);
+      group.add(ac);
+
+      if (safeLevel >= 3) {
+        const ac2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.25, 0.4), GameMaterials.concreteMat);
+        ac2.position.set(-0.3, height + 0.125, -0.2);
+        group.add(ac2);
+      }
+
+      if (safeLevel === 4) {
+        // 超高層ビルの尖塔（アンテナタワー）
+        const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.08, 1.2, 8), GameMaterials.poleMat);
+        spire.position.set(0, height + 0.6, 0);
+        group.add(spire);
       }
     }
-
-    const ac = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.25, 0.4), GameMaterials.concreteMat);
-    ac.position.set(0.3, height + 0.125, 0.3);
-    group.add(ac);
 
     return group;
   }

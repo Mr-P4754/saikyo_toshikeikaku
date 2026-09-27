@@ -29,6 +29,7 @@ export class InstancedMeshManager {
   constructor(scene: THREE.Scene, initialCapacity: number = 4096) {
     this.scene = scene;
     this.container.name = 'InstancedMeshContainer';
+    this.container.frustumCulled = false;
     this.scene.add(this.container);
 
     this.initGeometriesAndLayers(initialCapacity);
@@ -97,6 +98,8 @@ export class InstancedMeshManager {
     mesh.count = 0;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    // インスタンスがワールド広域に分散するため、原点基準の視錐台カリングによる消失を完全防止
+    mesh.frustumCulled = false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.container.add(mesh);
 
@@ -314,6 +317,7 @@ export class InstancedMeshManager {
     newMesh.count = layer.count;
     newMesh.castShadow = true;
     newMesh.receiveShadow = true;
+    newMesh.frustumCulled = false;
     newMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
     const tempMatrix = new THREE.Matrix4();
@@ -360,15 +364,21 @@ export class InstancedMeshManager {
 
   /**
    * 直線高架レール (rail_elevated) の配置
+   * pierMatrices に各階層（上層から地上まで）の橋脚マトリクス配列を受け取り、完全な支柱を描画する
    */
-  public setElevatedTrack(key: string, matrix: THREE.Matrix4, showPier: boolean = true): void {
+  public setElevatedTrack(key: string, matrix: THREE.Matrix4, pierMatrices: THREE.Matrix4[] | boolean = true): void {
     this.setLayerInstance('rail_elevated_structure', key, matrix);
     this.setLayerInstance('rail_elevated_sleepers', key, matrix);
     this.setLayerInstance('rail_elevated_rails', key, matrix);
-    if (showPier) {
-      this.setLayerInstance('standard_pier', `pier_${key}`, matrix);
-    } else {
-      this.removeLayerInstance('standard_pier', `pier_${key}`);
+
+    this.removeElevatedPiers(key);
+
+    if (Array.isArray(pierMatrices)) {
+      for (let i = 0; i < pierMatrices.length; i++) {
+        this.setLayerInstance('standard_pier', `pier_${key}_${i}`, pierMatrices[i]);
+      }
+    } else if (pierMatrices === true) {
+      this.setLayerInstance('standard_pier', `pier_${key}_0`, matrix);
     }
   }
 
@@ -379,6 +389,16 @@ export class InstancedMeshManager {
     this.removeLayerInstance('rail_elevated_structure', key);
     this.removeLayerInstance('rail_elevated_sleepers', key);
     this.removeLayerInstance('rail_elevated_rails', key);
+    this.removeElevatedPiers(key);
+  }
+
+  /**
+   * 特定高架レールに紐づく全階層分の橋脚インスタンスを削除
+   */
+  private removeElevatedPiers(key: string): void {
+    for (let i = 0; i < 6; i++) {
+      this.removeLayerInstance('standard_pier', `pier_${key}_${i}`);
+    }
     this.removeLayerInstance('standard_pier', `pier_${key}`);
   }
 

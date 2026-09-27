@@ -824,27 +824,173 @@ html, body {
   background: rgba(244, 63, 94, 0.4);
 }
 
+/* 車窓モード内 列車切替コントロール */
+.cab-train-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.cab-nav-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text-main, #f8fafc);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cab-nav-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
+}
+
+.cab-nav-btn.change {
+  flex: 1;
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #7dd3fc;
+}
+
+.cab-nav-btn.change:hover {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: rgba(56, 189, 248, 0.6);
+}
+
+/* 車窓 列車選択モーダル */
+.cab-select-card {
+  max-width: 520px;
+  width: 90vw;
+}
+
+.cab-train-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 55vh;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 10px;
+}
+
+.cab-train-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  gap: 12px;
+}
+
+.cab-train-item:hover {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.cab-train-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.cab-train-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cab-train-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.cab-train-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.cab-train-badge.freight {
+  background: rgba(234, 179, 8, 0.2);
+  color: #facc15;
+}
+
+.cab-train-detail {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cab-train-action-btn {
+  background: var(--accent-cyan, #0284c7);
+  border: none;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.cab-train-item:hover .cab-train-action-btn {
+  background: #0ea5e9;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.5);
+}
+
+/* 階層スライサーとミニマップの非表示用ユーティリティ */
+#floor-slicer.hidden {
+  display: none !important;
+}
+
+#minimap-container.hidden {
+  display: none !important;
+}
+
 /* ==========================================================================
    Tile Inspector (Bottom Left)
    ========================================================================== */
 #inspector-panel {
   position: absolute;
-  bottom: 24px;
-  left: 24px;
-  z-index: 12;
-  width: 320px;
-  max-height: calc(100vh - 100px);
+  bottom: 88px;
+  left: 20px;
+  z-index: 25;
+  width: 250px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 180px);
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg-panel);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-panel);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  padding: 14px 16px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   pointer-events: auto;
 }
 
@@ -1361,9 +1507,10 @@ html, body {
     padding: 6px 10px;
   }
   #inspector-panel {
-    width: 92vw;
-    left: 4vw;
-    bottom: 16px;
+    width: 250px;
+    max-width: calc(100vw - 32px);
+    left: 16px;
+    bottom: 84px;
   }
   .modal-card, .vehicle-card {
     width: 94vw;
@@ -2202,6 +2349,7 @@ html, body {
   letter-spacing: 2px;
   background: linear-gradient(135deg, #ffffff 30%, #38bdf8 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 8px;
 }
@@ -2677,28 +2825,31 @@ html, body {
 /* インスペクター名称変更入力欄 */
 .rename-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.15);
 }
 
 .rename-input-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  width: 100%;
 }
 
 .rename-input {
   flex: 1;
+  min-width: 0;
+  width: 0;
   background: rgba(15, 23, 42, 0.85);
   border: 1px solid rgba(56, 189, 248, 0.4);
   border-radius: var(--radius-sm);
   color: #fff;
-  padding: 5px 8px;
-  font-size: 12px;
+  padding: 4px 7px;
+  font-size: 11.5px;
   font-family: inherit;
   outline: none;
   transition: border-color 0.2s;
@@ -2710,12 +2861,13 @@ html, body {
 }
 
 .rename-apply-btn {
+  flex-shrink: 0;
   background: linear-gradient(135deg, #0284c7, #0369a1);
   border: 1px solid #38bdf8;
   color: #fff;
   border-radius: var(--radius-sm);
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11.5px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
@@ -2913,4 +3065,61 @@ html, body {
   border-radius: 6px;
   margin-top: 8px;
 }
+
+/* ==========================================================================
+   ワールド内 3D追従ラベル（駅待機乗客数・旅客列車乗客数: 数字のみ表示）
+   ========================================================================== */
+.world-labels-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* マウスやタップのドラッグ・クリックを透過 */
+  overflow: hidden;
+  z-index: 5; /* 3D Canvas (z-index: 1) の上、HUD (z-index: 10) の下 */
+}
+
+.world-badge {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: none;
+  font-family: 'Outfit', 'Zen Kaku Gothic New', -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 2.5px 6px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  letter-spacing: 0.3px;
+}
+
+/* 駅待機乗客数バッジ（シアン系・駅ホームの真上） */
+.station-badge {
+  background: rgba(15, 23, 42, 0.88);
+  border: 1.5px solid #38bdf8;
+  color: #38bdf8;
+  text-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
+}
+
+/* 旅客列車の乗客数バッジ（エメラルドグリーン系・列車の先頭車上を追跡） */
+.train-badge {
+  background: rgba(6, 78, 59, 0.9);
+  border: 1.5px solid #34d399;
+  color: #ecfdf5;
+  text-shadow: 0 0 6px rgba(52, 211, 153, 0.5);
+}
+
+/* 満員時の列車バッジ（ハイライト・注意色） */
+.train-badge.full {
+  background: rgba(153, 27, 27, 0.92);
+  border-color: #f87171;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(248, 113, 113, 0.8);
+}
+
 

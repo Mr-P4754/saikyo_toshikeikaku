@@ -198,8 +198,8 @@ export class MiniMap {
     for (const t of tiles) {
       if (t.type === 'empty' || t.type === 'nature' || t.type === 'residence' || t.type === 'commercial') continue;
       const { px, py } = this.tileToPx(t.x, t.z);
-      if (t.type.startsWith('station') || t.type === 'signal_yard') {
-        ctx.fillStyle = t.isCargoYard ? '#f97316' : '#fbbf24';
+      if (WorldMap.isStationTileType(t.type)) {
+        ctx.fillStyle = (t.isCargoYard || t.type.startsWith('cargo_station')) ? '#f97316' : '#fbbf24';
         ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
         ctx.fillStyle = '#f8fafc';
       } else {

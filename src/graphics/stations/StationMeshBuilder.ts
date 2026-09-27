@@ -116,8 +116,19 @@ export class StationMeshBuilder {
         const m = obj as THREE.Mesh;
         if (m.material) {
           if (Array.isArray(m.material)) {
-            m.material.forEach(mat => (mat as any).map = newTex);
+            m.material.forEach(mat => {
+              const oldTex = (mat as any).map;
+              if (oldTex && oldTex.dispose && oldTex !== newTex) {
+                oldTex.dispose();
+              }
+              (mat as any).map = newTex;
+              mat.needsUpdate = true;
+            });
           } else {
+            const oldTex = (m.material as any).map;
+            if (oldTex && oldTex.dispose && oldTex !== newTex) {
+              oldTex.dispose();
+            }
             (m.material as any).map = newTex;
             (m.material as any).needsUpdate = true;
           }

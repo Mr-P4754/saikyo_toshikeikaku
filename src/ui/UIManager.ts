@@ -5,7 +5,7 @@ import {
 } from '../simulation/WorldMap';
 import { FinancialReportData } from '../simulation/Economy';
 import { CameraMode } from '../graphics/CameraManager';
-import { VEHICLE_CATALOG, VehicleModelInfo } from '../simulation/VehicleCatalog';
+import { VEHICLE_CATALOG, VehicleModelInfo, getMaxCapacity } from '../simulation/VehicleCatalog';
 import { TrainInstance } from '../simulation/TrainManager';
 import { UI_ICONS } from './icons';
 import { MapSize, TerrainType, GridLayer, DeadlockEvent } from '../core/types';
@@ -48,20 +48,20 @@ export type ActiveTool =
 
 export const TOOL_CONFIG: Record<ActiveTool, { cost: number; tileType: TileType | null; name: string; icon: string }> = {
   'select': { cost: 0, tileType: null, name: '選択', icon: UI_ICONS.select },
-  'rail-straight': { cost: 2000000, tileType: 'rail_ground', name: '地上線路', icon: UI_ICONS.railStraight },
+  'rail-straight': { cost: 2000000, tileType: 'rail_ground', name: '直線線路', icon: UI_ICONS.railStraight },
   'rail-elevated': { cost: 5000000, tileType: 'rail_elevated', name: '高架線路', icon: UI_ICONS.railElevated },
-  'rail-curve': { cost: 6000000, tileType: null, name: '地上曲線', icon: UI_ICONS.railCurve },
+  'rail-curve': { cost: 6000000, tileType: null, name: '曲線線路', icon: UI_ICONS.railCurve },
   'rail-curve-elevated': { cost: 9000000, tileType: null, name: '高架曲線', icon: UI_ICONS.railCurve },
-  'rail-slope': { cost: 5000000, tileType: 'rail_slope', name: '勾配線路 (上りスロープ)', icon: UI_ICONS.railSlope },
-  'rail-slope-underground': { cost: 6000000, tileType: 'rail_slope_underground', name: '地下勾配線路 (潜入スロープ)', icon: UI_ICONS.railSlopeUnderground },
+  'rail-slope': { cost: 5000000, tileType: 'rail_slope', name: '勾配線路', icon: UI_ICONS.railSlope },
+  'rail-slope-underground': { cost: 6000000, tileType: 'rail_slope_underground', name: '地下勾配線路', icon: UI_ICONS.railSlopeUnderground },
   'rail-tunnel': { cost: 4000000, tileType: 'rail_ground', name: 'トンネル線路', icon: UI_ICONS.railTunnel },
   // ② 分岐器は1×1マス
-  'point-switch': { cost: 2500000, tileType: null, name: '地上分岐器', icon: UI_ICONS.pointSwitch },
+  'point-switch': { cost: 2500000, tileType: null, name: '分岐器', icon: UI_ICONS.pointSwitch },
   'point-switch-elevated': { cost: 4000000, tileType: null, name: '高架分岐器', icon: UI_ICONS.pointSwitch },
   // ③ シーサスクロッシング（複線用交差分岐、2×2）
-  'scissors-crossing': { cost: 8000000, tileType: null, name: '地上シーサス', icon: UI_ICONS.scissorsCrossing },
+  'scissors-crossing': { cost: 8000000, tileType: null, name: 'シーサスクロッシング', icon: UI_ICONS.scissorsCrossing },
   'scissors-crossing-elevated': { cost: 12000000, tileType: null, name: '高架シーサス', icon: UI_ICONS.scissorsCrossing },
-  'station-small': { cost: 20000000, tileType: 'station_ground', name: '地上駅', icon: UI_ICONS.station },
+  'station-small': { cost: 20000000, tileType: 'station_ground', name: '駅', icon: UI_ICONS.station },
   'station-elevated': { cost: 40000000, tileType: 'station_elevated', name: '高架駅', icon: UI_ICONS.stationElevated },
   'signal-yard': { cost: 5000000, tileType: 'signal_yard', name: '信号場・留置線', icon: UI_ICONS.pointSwitch },
   'cargo-station': { cost: 15000000, tileType: 'cargo_station_ground', name: '貨物駅', icon: UI_ICONS.cargoYard },
@@ -98,8 +98,8 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
     name: '線路',
     icon: UI_ICONS.railStraight,
     tools: [
-      'rail-straight', 'rail-elevated', 'rail-tunnel', 'rail-curve', 'rail-curve-elevated', 'rail-slope', 'rail-slope-underground',
-      'point-switch', 'point-switch-elevated', 'scissors-crossing', 'scissors-crossing-elevated'
+      'rail-straight', 'rail-curve', 'rail-slope', 'rail-slope-underground',
+      'point-switch', 'scissors-crossing'
     ],
     demolishTool: 'demolish-track'
   },
@@ -107,7 +107,7 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
     id: 'station',
     name: '駅',
     icon: UI_ICONS.station,
-    tools: ['station-small', 'station-elevated', 'signal-yard', 'cargo-station'],
+    tools: ['station-small', 'signal-yard', 'cargo-station'],
     demolishTool: 'demolish-station'
   },
   {
@@ -158,7 +158,8 @@ export class UIManager {
     s1: document.getElementById('btn-speed-1')!,
     s2: document.getElementById('btn-speed-2')!,
     s3: document.getElementById('btn-speed-3')!,
-    s4: document.getElementById('btn-speed-4')!
+    s4: document.getElementById('btn-speed-4')!,
+    s5: document.getElementById('btn-speed-5')!
   };
 
   private audioToggleBtn = document.getElementById('btn-audio-toggle')!;
@@ -184,11 +185,21 @@ export class UIManager {
   private timeText = document.getElementById('time-text');
   private timeModeBadge = document.getElementById('time-mode-badge');
   private gridToggleBtn = document.getElementById('btn-grid-toggle')!;
+  private slicerToggleBtn = document.getElementById('btn-slicer-toggle');
+  private minimapToggleBtn = document.getElementById('btn-minimap-toggle');
+  private floorSlicerEl = document.getElementById('floor-slicer');
 
   private cabOverlay = document.getElementById('cab-view-overlay')!;
   private cabTrainName = document.getElementById('cab-train-name');
   private cabSpeedVal = document.getElementById('cab-speed-val')!;
   private exitCabBtn = document.getElementById('btn-exit-cab')!;
+  private btnCabPrev = document.getElementById('btn-cab-prev');
+  private btnCabNext = document.getElementById('btn-cab-next');
+  private btnCabChange = document.getElementById('btn-cab-change');
+
+  private cabSelectModal = document.getElementById('cab-select-modal');
+  private closeCabSelectBtn = document.getElementById('btn-close-cab-select');
+  private cabTrainListEl = document.getElementById('cab-train-list');
 
   private clockDisplay = document.getElementById('clock-display')!;
 
@@ -285,12 +296,15 @@ export class UIManager {
   public onTimeToggled: () => void = () => {};
   public onGridToggled: (visible: boolean) => void = () => {};
   public onCameraModeToggled: () => void = () => {};
+  public onCabPrevRequested: () => void = () => {};
+  public onCabNextRequested: () => void = () => {};
+  public onCabSelectRequested: () => void = () => {};
   public onExitCab: () => void = () => {};
   public onSaveRequested: () => void = () => {};
   public onResetRequested: () => void = () => {};
-  public onTogglePointSwitch: (x: number, z: number) => void = () => {};
+  public onTogglePointSwitch: (x: number, z: number, layer?: GridLayer) => void = () => {};
   // ③ シーサスクロッシングの開通状態切替
-  public onCycleCrossing: (x: number, z: number) => void = () => {};
+  public onCycleCrossing: (x: number, z: number, layer?: GridLayer) => void = () => {};
   public onConfirmBuyTrain: (model: VehicleModelInfo, cars: number) => void = () => {};
   // ① 列車撤去
   public onRemoveTrain: (trainId: number) => void = () => {};
@@ -302,7 +316,7 @@ export class UIManager {
   public onStationLengthChanged: (length: number) => void = () => {};
   public onSetStationLength: (x: number, z: number, targetLength: number) => void = () => {};
   // 駅名・編成名自由リネームコールバック
-  public onRenameStation?: (x: number, z: number, newName: string) => void;
+  public onRenameStation?: (x: number, z: number, newName: string, layer?: GridLayer) => void;
   public onRenameTrain?: (trainId: number, newName: string) => void;
   // ⑦ 車両基地モーダル開閉・デプロイ・回送・追跡
   public onOpenFleetModal: () => void = () => {};
@@ -339,7 +353,7 @@ export class UIManager {
   private btnMobileCancel = document.getElementById('btn-mobile-cancel');
 
   // インスペクター追跡と閉鎖コールバック
-  private inspectedTileCoords: { x: number; z: number } | null = null;
+  private inspectedTileCoords: { x: number; z: number; layer: GridLayer } | null = null;
   private inspectedTrainId: number | null = null;
   public onInspectorClosed: () => void = () => {};
 
@@ -415,7 +429,8 @@ export class UIManager {
 
     // ⑤ 最上段ツール（選択・列車購入・撤去）
     this.topLevelToolBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const tool = btn.getAttribute('data-tool') as ActiveTool;
         this.selectTool(tool);
         this.closeSubmenu();
@@ -442,17 +457,41 @@ export class UIManager {
 
     // ⑤ カテゴリーボタン → サブメニュー（多層モーダル）を開閉
     this.categoryBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const category = btn.getAttribute('data-category')!;
         if (this.activeCategoryId === category && !this.toolSubmenu.classList.contains('hidden')) {
           this.closeSubmenu();
         } else {
+          // 前の設置作業（仮置き・ドラッグ・列車配置等）を完全にキャンセル
+          this.onCancelPlacement();
+
+          // ツールを一旦安全な未選択状態（select）にリセット（勝手に代表ツールを自動選択しない）
+          this.selectTool('select');
+
           this.openSubmenu(category);
         }
       });
     });
 
-    this.closeSubmenuBtn.addEventListener('click', () => this.closeSubmenu());
+    this.closeSubmenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeSubmenu();
+      this.onCancelPlacement();
+      this.selectTool('select');
+    });
+
+    // サブメニュー外クリック時にサブメニューを安全に閉じる
+    window.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!this.toolSubmenu.classList.contains('hidden')) {
+        const isClickInsideSubmenu = target ? !!target.closest('#tool-submenu') : false;
+        const isClickCategoryBtn = target ? !!target.closest('.category-btn') : false;
+        if (!isClickInsideSubmenu && !isClickCategoryBtn) {
+          this.closeSubmenu();
+        }
+      }
+    });
 
     // ⑦ 設置決定・キャンセルボタン / ⑤ 回転ボタン / ② 分岐左右切替 / ① 駅ホーム左右切替
     this.confirmPlacementBtn.addEventListener('click', () => this.onConfirmPlacement());
@@ -471,6 +510,7 @@ export class UIManager {
     floorBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this.onCancelPlacement();
         const rawLayer = btn.getAttribute('data-layer') || '1';
         const layer = rawLayer === 'all' ? 'all' : (parseInt(rawLayer, 10) as GridLayer);
         this.setFloorActive(layer);
@@ -496,6 +536,7 @@ export class UIManager {
     this.speedButtons.s2.addEventListener('click', () => setSpeed(2, this.speedButtons.s2));
     this.speedButtons.s3.addEventListener('click', () => setSpeed(3, this.speedButtons.s3));
     this.speedButtons.s4?.addEventListener('click', () => setSpeed(4, this.speedButtons.s4));
+    this.speedButtons.s5?.addEventListener('click', () => setSpeed(5, this.speedButtons.s5));
 
     // Audio
     this.audioToggleBtn.addEventListener('click', () => {
@@ -512,10 +553,12 @@ export class UIManager {
 
     // ⑦ 車両管理モーダル開閉
     this.fleetToggleBtn?.addEventListener('click', () => {
+      this.onCancelPlacement();
       this.onOpenFleetModal();
     });
     this.fleetFromModalBtn?.addEventListener('click', () => {
       this.vehicleModal.classList.add('hidden');
+      this.onCancelPlacement();
       this.onOpenFleetModal();
     });
     this.closeFleetBtn?.addEventListener('click', () => {
@@ -543,9 +586,45 @@ export class UIManager {
       this.onGridToggled(gridVisible);
     });
 
-    // Cab Exit
+    // 階層スライサー表示切替
+    let slicerVisible = true;
+    this.slicerToggleBtn?.addEventListener('click', () => {
+      slicerVisible = !slicerVisible;
+      this.slicerToggleBtn?.classList.toggle('active', slicerVisible);
+      this.floorSlicerEl?.classList.toggle('hidden', !slicerVisible);
+    });
+
+    // 路線図ミニマップ表示切替
+    let minimapVisible = true;
+    this.minimapToggleBtn?.addEventListener('click', () => {
+      minimapVisible = !minimapVisible;
+      this.minimapToggleBtn?.classList.toggle('active', minimapVisible);
+      const minimap = document.getElementById('minimap-container');
+      minimap?.classList.toggle('hidden', !minimapVisible);
+    });
+
+    // Cab Exit & Navigation
     this.exitCabBtn.addEventListener('click', () => {
       this.onExitCab();
+    });
+    this.btnCabPrev?.addEventListener('click', () => {
+      this.onCabPrevRequested();
+    });
+    this.btnCabNext?.addEventListener('click', () => {
+      this.onCabNextRequested();
+    });
+    this.btnCabChange?.addEventListener('click', () => {
+      this.onCabSelectRequested();
+    });
+
+    // 車窓列車選択モーダル
+    this.closeCabSelectBtn?.addEventListener('click', () => {
+      this.hideCabTrainSelectModal();
+    });
+    this.cabSelectModal?.addEventListener('click', (e) => {
+      if (e.target === this.cabSelectModal) {
+        this.hideCabTrainSelectModal();
+      }
     });
 
     // Report modal
@@ -609,7 +688,7 @@ export class UIManager {
         this.onRenameTrain(this.inspectedTrainId, newName);
         this.inspectType.textContent = newName;
       } else if (this.inspectedTileCoords && this.onRenameStation) {
-        this.onRenameStation(this.inspectedTileCoords.x, this.inspectedTileCoords.z, newName);
+        this.onRenameStation(this.inspectedTileCoords.x, this.inspectedTileCoords.z, newName, this.inspectedTileCoords.layer);
         this.inspectType.textContent = `駅 - ${newName}`;
       }
     };
@@ -662,6 +741,23 @@ export class UIManager {
         this.onResetRequested();
       }
     });
+
+    // ツールバーやサブメニューなどのUI操作が背後3Dキャンバスのドラッグやクリックに伝播するのを防止
+    const uiContainers = [
+      document.getElementById('build-toolbar'),
+      this.toolSubmenu,
+      this.rotationHint,
+      this.stationLengthSelector,
+      document.getElementById('floor-slicer'),
+      document.getElementById('side-controls-dock')
+    ];
+    uiContainers.forEach(container => {
+      if (container) {
+        container.addEventListener('mousedown', (e) => e.stopPropagation());
+        container.addEventListener('pointerdown', (e) => e.stopPropagation());
+        container.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+      }
+    });
   }
 
   /**
@@ -674,6 +770,7 @@ export class UIManager {
     else if (speed === 2) this.speedButtons.s2?.classList.add('active');
     else if (speed === 3) this.speedButtons.s3?.classList.add('active');
     else if (speed === 4) this.speedButtons.s4?.classList.add('active');
+    else if (speed === 5) this.speedButtons.s5?.classList.add('active');
   }
 
   /**
@@ -729,11 +826,13 @@ export class UIManager {
       `;
       fleetBtn.addEventListener('click', () => {
         this.closeSubmenu();
+        this.onCancelPlacement();
         this.onOpenFleetModal();
       });
       this.submenuGrid.appendChild(fleetBtn);
     }
 
+    this.closeInspector();
     this.toolSubmenu.classList.remove('hidden');
     this.categoryBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-category') === categoryId));
 
@@ -751,6 +850,12 @@ export class UIManager {
 
   private closeSubmenu() {
     this.toolSubmenu.classList.add('hidden');
+    this.activeCategoryId = null;
+
+    // カテゴリーボタンのハイライトを現在の選択ツールに合わせて再評価
+    const ownerCategory = TOOL_CATEGORIES.find(c => c.tools.includes(this.activeTool) || c.demolishTool === this.activeTool);
+    this.categoryBtns.forEach(b => b.classList.toggle('active', ownerCategory?.id === b.getAttribute('data-category')));
+
     // サブメニューを閉じた後、選択中のツールに応じてセレクターを再表示
     const isStationTool = this.isStationTool(this.activeTool);
     this.stationLengthSelector.classList.toggle('hidden', !isStationTool);
@@ -760,6 +865,13 @@ export class UIManager {
    * ツール選択の共通処理（最上段ボタン／サブメニュー双方から呼ばれる）
    */
   private selectTool(tool: ActiveTool) {
+    // ツール変更時は前の設置作業（仮置き・ドラッグ・列車配置等）を完全にキャンセル
+    this.onCancelPlacement();
+
+    if (tool !== 'select') {
+      this.closeInspector();
+    }
+
     this.activeTool = tool;
 
     // 最上段ボタンのハイライト更新
@@ -787,13 +899,15 @@ export class UIManager {
       card.className = `veh-item-card ${veh.id === this.selectedVehicle.id ? 'selected' : ''}`;
 
       const stripeHex = '#' + veh.stripeColor.toString(16).padStart(6, '0');
+      const maxOcc = Math.round((veh.maxOccupancyRate ?? 1.0) * 100);
+      const capText = veh.category === 'freight' ? '貨物専用' : `1両定員: ${veh.baseCapacity}名 (最大${maxOcc}%)`;
 
       card.innerHTML = `
         <div class="veh-stripe-bar" style="background: ${stripeHex}"></div>
         <div class="veh-name">${veh.name}</div>
         <div class="veh-specs">
           <span>最高速度: ${veh.maxSpeed} km/h</span>
-          <span>1両定員: ${veh.baseCapacity}名</span>
+          <span>${capText}</span>
         </div>
         <div class="veh-price">¥${(veh.basePrice / 10000).toLocaleString()}万/両</div>
       `;
@@ -1206,14 +1320,13 @@ export class UIManager {
               <span>形式: ${item.model.name}</span>
               <div class="fleet-car-config-row">
                 <span class="fleet-car-label">編成両数:</span>
-                <span class="fleet-car-val"><strong>${item.cars}両編成</strong> (定員: ${(item.model.baseCapacity * item.cars).toLocaleString()}名)</span>
+                <span class="fleet-car-val"><strong>${item.cars}両編成</strong> (定員: ${(item.model.baseCapacity * item.cars).toLocaleString()}名 / 最大: ${getMaxCapacity(item.model, item.cars).toLocaleString()}名)</span>
                 <div class="fleet-car-controls">
                   <button class="fleet-btn-car-minus" data-id="${item.id}" ${item.cars <= 1 ? 'disabled title="これ以上減らせません"' : 'title="1両減車（売却返金）"'}>-1両</button>
                   <button class="fleet-btn-car-plus" data-id="${item.id}" ${item.cars >= 10 ? 'disabled title="最大10両までです"' : 'title="追加車両を購入"'}>+1両 (購入: ¥${item.model.basePrice.toLocaleString()})</button>
                 </div>
               </div>
               <span>最高速度: ${item.model.maxSpeed}km/h</span>
-              <span>運賃: ¥${item.model.farePerRide}</span>
               <span>運行費: ¥${(item.model.dailyRunningCostPerCar * item.cars).toLocaleString()}/日</span>
             </div>
           </div>
@@ -1329,10 +1442,75 @@ export class UIManager {
     this.cabSpeedVal.textContent = String(Math.round(speed));
   }
 
+  /**
+   * 車窓モード表示中の列車名更新
+   */
   public setCabTrainName(name: string) {
     if (this.cabTrainName) {
       this.cabTrainName.textContent = name;
     }
+  }
+
+  /**
+   * 車窓モード用 列車選択モーダルの表示
+   */
+  public showCabTrainSelectModal(trains: any[], onSelect: (trainId: number) => void) {
+    const modalEl = this.cabSelectModal;
+    const listEl = this.cabTrainListEl;
+    if (!modalEl || !listEl) return;
+    listEl.innerHTML = '';
+
+    if (trains.length === 0) {
+      listEl.innerHTML = `
+        <div style="text-align: center; padding: 24px 12px; color: var(--text-muted); font-size: 13px;">
+          現在運行中の列車はありません。<br>先に列車を購入・配置してください。
+        </div>
+      `;
+    } else {
+      trains.forEach((train) => {
+        const item = document.createElement('div');
+        item.className = 'cab-train-item';
+
+        const isFreight = train.model.category === 'freight';
+        const badgeText = isFreight ? '貨物列車' : '旅客列車';
+        const statusText = train.isStopped ? '停車中' : `${Math.round(train.speed || 0)} km/h`;
+        const layerText = train.currentTile.layer >= 2
+          ? `地上${train.currentTile.layer}F`
+          : (train.currentTile.layer < 0 ? `地下B${Math.abs(train.currentTile.layer)}F` : '地上1F');
+
+        item.innerHTML = `
+          <div class="cab-train-info">
+            <div class="cab-train-header">
+              <span class="cab-train-title">${train.name}</span>
+              <span class="cab-train-badge ${isFreight ? 'freight' : ''}">${badgeText}</span>
+              <span style="font-size: 11px; color: ${train.isStopped ? '#f87171' : '#34d399'}; font-weight: 600;">● ${statusText}</span>
+            </div>
+            <div class="cab-train-detail">
+              <span>形式: ${train.model.name}</span>
+              <span>両数: ${train.carCount}両編成</span>
+              <span>位置: ${layerText} (${train.currentTile.x}, ${train.currentTile.z})</span>
+            </div>
+          </div>
+          <button class="cab-train-action-btn">運転席に乗車</button>
+        `;
+
+        item.addEventListener('click', () => {
+          this.hideCabTrainSelectModal();
+          onSelect(train.id);
+        });
+
+        listEl.appendChild(item);
+      });
+    }
+
+    modalEl.classList.remove('hidden');
+  }
+
+  /**
+   * 車窓モード用 列車選択モーダルを閉じる
+   */
+  public hideCabTrainSelectModal() {
+    this.cabSelectModal?.classList.add('hidden');
   }
 
   /**
@@ -1362,17 +1540,36 @@ export class UIManager {
       platformCount?: number;
       length: number;
       dailyPassengers: number;
+      previousDayPassengers?: number;
+      dailyLoadedCargo?: number;
+      dailyUnloadedCargo?: number;
       totalPassengers: number;
       totalRevenue: number;
       maintenance: number;
       netProfit: number;
       isSignalYard?: boolean;
+      isCargoYard?: boolean;
+      cargoContainers?: number;
     } | null
   ) {
+    this.closeSubmenu();
     this.inspectorPanel.classList.remove('hidden');
-    this.inspectedTileCoords = { x: tile.x, z: tile.z };
+    this.inspectedTileCoords = { x: tile.x, z: tile.z, layer: (tile.layer ?? 1) as GridLayer };
     this.inspectedTrainId = null;
     this.inspectCoords.textContent = `(${tile.x}, ${tile.z})`;
+
+    const residenceNames: Record<number, string> = {
+      1: '戸建て住宅 (Lv.1)',
+      2: '低層アパート (Lv.2)',
+      3: '中層マンション (Lv.3)',
+      4: 'タワーマンション (Lv.4)'
+    };
+    const commercialNames: Record<number, string> = {
+      1: '個人商店・店舗 (Lv.1)',
+      2: '中型オフィスビル (Lv.2)',
+      3: '大型ビジネスビル (Lv.3)',
+      4: '超高層ランドマークタワー (Lv.4)'
+    };
 
     const typeNames: Record<TileType, string> = {
       empty: '更地',
@@ -1384,8 +1581,8 @@ export class UIManager {
       point_switch_elevated: '分岐器・ポイント (高架)',
       scissors_crossing_ground: 'シーサスクロッシング (地上・2×2)',
       scissors_crossing_elevated: 'シーサスクロッシング (高架・2×2)',
-      rail_slope: '勾配線路 (スロープ)',
-      rail_slope_underground: '地下勾配線路 (スロープ)',
+      rail_slope: '勾配線路',
+      rail_slope_underground: '地下勾配線路',
       station_ground: '駅舎 (地上)',
       station_elevated: '高架駅',
       signal_yard: '信号場・留置線',
@@ -1393,8 +1590,8 @@ export class UIManager {
       cargo_station_elevated: '貨物駅・コンテナヤード (高架)',
       road: '道路',
       level_crossing: '踏切',
-      residence: `住宅区画 (Lv.${tile.level})`,
-      commercial: `商業オフィスビル (Lv.${tile.level})`,
+      residence: residenceNames[tile.level] || `住宅区画 (Lv.${tile.level})`,
+      commercial: commercialNames[tile.level] || `商業オフィスビル (Lv.${tile.level})`,
       industrial: `工業施設 (Lv.${tile.level})`,
       nature: '森林・緑地'
     };
@@ -1418,7 +1615,7 @@ export class UIManager {
         if (!switchHub.switchSchedule) switchHub.switchSchedule = createDefaultSwitchSchedule();
         // ③ 手動で切り替えた時はモードを manual にし、列車通過時に勝手に straight へ戻されないようにする
         switchHub.switchSchedule.mode = 'manual';
-        this.onTogglePointSwitch(switchHub.x, switchHub.z);
+        this.onTogglePointSwitch(switchHub.x, switchHub.z, (switchHub.layer ?? 1) as GridLayer);
       });
       this.inspectActions.appendChild(switchBtn);
 
@@ -1446,7 +1643,7 @@ export class UIManager {
       crossBtn.className = 'switch-toggle-btn';
       crossBtn.textContent = '手動開通切替（直進 / 交差A / 交差B）';
       crossBtn.addEventListener('click', () => {
-        this.onCycleCrossing(tile.x, tile.z);
+        this.onCycleCrossing(tile.x, tile.z, (tile.layer ?? 1) as GridLayer);
       });
       this.inspectActions.appendChild(crossBtn);
 
@@ -1499,12 +1696,15 @@ export class UIManager {
           <div class="fin-row"><span class="fin-label">施設区分:</span><span class="fin-val">貨物取扱ヤード</span></div>
           <div class="fin-row"><span class="fin-label">ホーム数:</span><span class="fin-val">${stationData.platformCount ?? 1}番線</span></div>
           <div class="fin-row"><span class="fin-label">有効長:</span><span class="fin-val">${runLen}両</span></div>
+          <div class="fin-row"><span class="fin-label">本日積込貨物:</span><span class="fin-val">${(stationData.dailyLoadedCargo ?? 0).toLocaleString()}個</span></div>
+          <div class="fin-row"><span class="fin-label">本日荷下貨物:</span><span class="fin-val">${(stationData.dailyUnloadedCargo ?? 0).toLocaleString()}個</span></div>
+          <div class="fin-row"><span class="fin-label">保管コンテナ:</span><span class="fin-val">${(stationData.cargoContainers ?? 0).toLocaleString()}個</span></div>
           <div class="fin-row"><span class="fin-label">月額維持費:</span><span class="fin-val negative">-¥${stationData.maintenance.toLocaleString()}</span></div>
         ` : `
           <div class="fin-title">駅 財務・利用状況</div>
           <div class="fin-row"><span class="fin-label">ホーム番線:</span><span class="fin-val">${stationData.platformNumber ?? 1}番線 (全${stationData.platformCount ?? 1}ホーム)</span></div>
           <div class="fin-row"><span class="fin-label">本日乗降客:</span><span class="fin-val">${stationData.dailyPassengers.toLocaleString()}人</span></div>
-          <div class="fin-row"><span class="fin-label">累計乗降客:</span><span class="fin-val">${stationData.totalPassengers.toLocaleString()}人</span></div>
+          <div class="fin-row"><span class="fin-label">前日乗降客:</span><span class="fin-val">${(stationData.previousDayPassengers ?? 0).toLocaleString()}人</span></div>
           <div class="fin-row"><span class="fin-label">累計運賃収入:</span><span class="fin-val positive">+¥${stationData.totalRevenue.toLocaleString()}</span></div>
           <div class="fin-row"><span class="fin-label">月額維持管理費:</span><span class="fin-val negative">-¥${stationData.maintenance.toLocaleString()}</span></div>
           <div class="fin-row"><span class="fin-label">駅純収支:</span><span class="fin-val ${profitClass}">${profitSign}¥${stationData.netProfit.toLocaleString()}</span></div>
@@ -1546,8 +1746,12 @@ export class UIManager {
 
     } else if (tile.type === 'level_crossing') {
       this.inspectExtraVal.textContent = '道路と線路が交差する踏切です。';
-    } else if (tile.type === 'residence' || tile.type === 'commercial') {
-      this.inspectExtraVal.textContent = `地価: ¥${(tile.landValue * 10000).toLocaleString()}`;
+    } else if (tile.type === 'residence') {
+      const popEstimate = tile.level === 1 ? '15〜30人' : tile.level === 2 ? '40〜80人' : tile.level === 3 ? '90〜180人' : '200〜400人';
+      this.inspectExtraVal.textContent = `地価: ¥${(tile.landValue * 10000).toLocaleString()} / 推定居住人口: 約${popEstimate}`;
+    } else if (tile.type === 'commercial') {
+      const commCap = tile.level === 1 ? '近隣型小型店舗' : tile.level === 2 ? '中規模オフィス・商業ビル' : tile.level === 3 ? '大型ビジネスオフィス' : '超高層ランドマーク複合施設';
+      this.inspectExtraVal.textContent = `地価: ¥${(tile.landValue * 10000).toLocaleString()} / 施設規模: ${commCap}`;
     } else {
       this.inspectExtraVal.textContent = '良好';
     }
@@ -1557,6 +1761,7 @@ export class UIManager {
    * ① ⑤ 列車（編成）詳細情報・収支・撤去インスペクター表示
    */
   public showTrainInspector(train: TrainInstance) {
+    this.closeSubmenu();
     this.inspectorPanel.classList.remove('hidden');
     this.inspectedTrainId = train.id;
     this.inspectedTileCoords = null;
@@ -1597,9 +1802,10 @@ export class UIManager {
       `;
     } else {
       const occupancy = Math.round((train.passengers / Math.max(1, train.capacity)) * 100);
+      const maxOcc = Math.round((train.model.maxOccupancyRate ?? 1.0) * 100);
       this.inspectFinancialBox.innerHTML = `
         <div class="fin-title">列車 財務・運行状況</div>
-        <div class="fin-row"><span class="fin-label">現在乗客 / 定員:</span><span class="fin-val">${train.passengers} / ${train.capacity}人 (${occupancy}%)</span></div>
+        <div class="fin-row"><span class="fin-label">現在乗客 / 定員:</span><span class="fin-val">${train.passengers} / ${train.capacity}人 (${occupancy}% / 最大${maxOcc}%)</span></div>
         <div class="fin-row"><span class="fin-label">累計乗客数:</span><span class="fin-val">${train.totalPassengers.toLocaleString()}人</span></div>
         <div class="fin-row"><span class="fin-label">累計運賃収入:</span><span class="fin-val positive">+¥${train.totalRevenue.toLocaleString()}</span></div>
         <div class="fin-row"><span class="fin-label">累計運行維持費:</span><span class="fin-val negative">-¥${train.totalCost.toLocaleString()}</span></div>
@@ -1632,15 +1838,21 @@ export class UIManager {
       platformCount?: number;
       length: number;
       dailyPassengers: number;
+      previousDayPassengers?: number;
+      dailyLoadedCargo?: number;
+      dailyUnloadedCargo?: number;
       totalPassengers: number;
       totalRevenue: number;
       maintenance: number;
       netProfit: number;
       isSignalYard?: boolean;
+      isCargoYard?: boolean;
+      cargoContainers?: number;
     } | null
   ) {
     if (this.inspectorPanel.classList.contains('hidden')) return;
-    if (!this.inspectedTileCoords || this.inspectedTileCoords.x !== tile.x || this.inspectedTileCoords.z !== tile.z) {
+    const tileLayer = (tile.layer ?? 1) as GridLayer;
+    if (!this.inspectedTileCoords || this.inspectedTileCoords.x !== tile.x || this.inspectedTileCoords.z !== tile.z || this.inspectedTileCoords.layer !== tileLayer) {
       return;
     }
 
@@ -1657,14 +1869,29 @@ export class UIManager {
       this.inspectFinancialBox.classList.remove('hidden');
       const profitSign = stationData.netProfit >= 0 ? '+' : '';
       const profitClass = stationData.netProfit >= 0 ? 'positive' : 'negative';
-      this.inspectFinancialBox.innerHTML = `
+      this.inspectFinancialBox.innerHTML = isYard ? `
+        <div class="fin-title">信号場・留置線 管理状況</div>
+        <div class="fin-row"><span class="fin-label">施設区分:</span><span class="fin-val">運行専用（低コスト）</span></div>
+        <div class="fin-row"><span class="fin-label">ホーム数:</span><span class="fin-val">${stationData.platformCount ?? 1}番線</span></div>
+        <div class="fin-row"><span class="fin-label">月額維持費:</span><span class="fin-val negative">-¥${stationData.maintenance.toLocaleString()}</span></div>
+      ` : (isCargo ? `
+        <div class="fin-title">貨物駅 管理状況</div>
+        <div class="fin-row"><span class="fin-label">施設区分:</span><span class="fin-val">貨物取扱ヤード</span></div>
+        <div class="fin-row"><span class="fin-label">ホーム数:</span><span class="fin-val">${stationData.platformCount ?? 1}番線</span></div>
+        <div class="fin-row"><span class="fin-label">有効長:</span><span class="fin-val">${runLen}両</span></div>
+        <div class="fin-row"><span class="fin-label">本日積込貨物:</span><span class="fin-val">${(stationData.dailyLoadedCargo ?? 0).toLocaleString()}個</span></div>
+        <div class="fin-row"><span class="fin-label">本日荷下貨物:</span><span class="fin-val">${(stationData.dailyUnloadedCargo ?? 0).toLocaleString()}個</span></div>
+        <div class="fin-row"><span class="fin-label">保管コンテナ:</span><span class="fin-val">${(stationData.cargoContainers ?? 0).toLocaleString()}個</span></div>
+        <div class="fin-row"><span class="fin-label">月額維持費:</span><span class="fin-val negative">-¥${stationData.maintenance.toLocaleString()}</span></div>
+      ` : `
         <div class="fin-title">駅 財務・利用状況</div>
+        <div class="fin-row"><span class="fin-label">ホーム番線:</span><span class="fin-val">${stationData.platformNumber ?? 1}番線 (全${stationData.platformCount ?? 1}ホーム)</span></div>
         <div class="fin-row"><span class="fin-label">本日乗降客:</span><span class="fin-val">${stationData.dailyPassengers.toLocaleString()}人</span></div>
-        <div class="fin-row"><span class="fin-label">累計乗降客:</span><span class="fin-val">${stationData.totalPassengers.toLocaleString()}人</span></div>
+        <div class="fin-row"><span class="fin-label">前日乗降客:</span><span class="fin-val">${(stationData.previousDayPassengers ?? 0).toLocaleString()}人</span></div>
         <div class="fin-row"><span class="fin-label">累計運賃収入:</span><span class="fin-val positive">+¥${stationData.totalRevenue.toLocaleString()}</span></div>
         <div class="fin-row"><span class="fin-label">月額維持管理費:</span><span class="fin-val negative">-¥${stationData.maintenance.toLocaleString()}</span></div>
         <div class="fin-row"><span class="fin-label">駅純収支:</span><span class="fin-val ${profitClass}">${profitSign}¥${stationData.netProfit.toLocaleString()}</span></div>
-      `;
+      `);
     }
 
     // タイムラインバーの現在時刻テキストおよびカレントセルの更新
@@ -1719,9 +1946,10 @@ export class UIManager {
       `;
     } else {
       const occupancy = Math.round((train.passengers / Math.max(1, train.capacity)) * 100);
+      const maxOcc = Math.round((train.model.maxOccupancyRate ?? 1.0) * 100);
       this.inspectFinancialBox.innerHTML = `
         <div class="fin-title">列車 財務・運行状況</div>
-        <div class="fin-row"><span class="fin-label">現在乗客 / 定員:</span><span class="fin-val">${train.passengers} / ${train.capacity}人 (${occupancy}%)</span></div>
+        <div class="fin-row"><span class="fin-label">現在乗客 / 定員:</span><span class="fin-val">${train.passengers} / ${train.capacity}人 (${occupancy}% / 最大${maxOcc}%)</span></div>
         <div class="fin-row"><span class="fin-label">累計乗客数:</span><span class="fin-val">${train.totalPassengers.toLocaleString()}人</span></div>
         <div class="fin-row"><span class="fin-label">累計運賃収入:</span><span class="fin-val positive">+¥${train.totalRevenue.toLocaleString()}</span></div>
         <div class="fin-row"><span class="fin-label">累計運行維持費:</span><span class="fin-val negative">-¥${train.totalCost.toLocaleString()}</span></div>

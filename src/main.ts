@@ -8,7 +8,7 @@ import { TrainManager } from './simulation/TrainManager';
 import { CityGrowth } from './simulation/CityGrowth';
 import { Economy } from './simulation/Economy';
 import { UIManager, TOOL_CONFIG, ActiveTool, FleetItem } from './ui/UIManager';
-import { VehicleModelInfo, getVehicleById, getRunningCostPerDay } from './simulation/VehicleCatalog';
+import { VehicleModelInfo, getVehicleById } from './simulation/VehicleCatalog';
 import { GameState } from './core/GameState';
 import { GridManager } from './core/GridManager';
 import { MapSize, TerrainType, GridLayer } from './core/types';
@@ -24,6 +24,7 @@ import { ChunkManager } from './core/ChunkManager';
 import { MiniMap } from './ui/MiniMap';
 import { ScheduleUI } from './ui/ScheduleUI';
 import { SwitchScheduleUI } from './ui/SwitchScheduleUI';
+import { WorldLabelManager } from './ui/WorldLabelManager';
 import { disposeHierarchy } from './graphics/materials';
 
 const CURVE_DIR_ORDER: CurveDirection[] = ['N_E', 'E_S', 'S_W', 'W_N'];
@@ -109,6 +110,7 @@ class GameApp {
   private miniMap!: MiniMap;
   private scheduleUI!: ScheduleUI;
   private switchScheduleUI!: SwitchScheduleUI;
+  private worldLabelManager: WorldLabelManager;
   // ゾーンブラシで塗った区画の3D表示（地面に重ねる半透明カラーマーカー）
   private zoneOverlayGroup: THREE.Group = new THREE.Group();
   private zoneOverlayMeshes: Map<string, THREE.Mesh> = new Map();
@@ -162,13 +164,18 @@ class GameApp {
   } | null = null;
   // ホバー追従プレビュー用列車ゴースト
   private hoverTrainGhost: THREE.Group | null = null;
+  // ホバー追従プレビュー用駅ゴースト
+  private hoverStationGhost: THREE.Group | null = null;
+  private hoverStationCacheKey: string = '';
 
   // ④ 現在選択されている駅ホーム有効長（1〜10両）
   private currentStationLength: number = 2;
 
   // ⑤ インスペクターで選択中のオブジェクト追跡
-  private selectedTilePos: { x: number; z: number } | null = null;
+  private selectedTilePos: { x: number; z: number; layer: GridLayer } | null = null;
   private selectedTrainId: number | null = null;
+  // 前面展望（車窓モード）で追従中の列車ID
+  private cabTargetTrainId: number | null = null;
 
   // 貨物ヤードのコンテナ段数視覚演出管理
   private cargoYardMeshes: Map<string, THREE.Group> = new Map();
@@ -217,6 +224,7 @@ class GameApp {
     this.economy = new Economy();
     this.timeManager = new TimeManager(this.economy.year, this.economy.month, this.economy.day, 6, 0);
     this.uiManager = new UIManager();
+    this.worldLabelManager = new WorldLabelManager();
     this.worldMap.gridManagerRef = this.gridManager;
     this.worldMap.groundHoleHandler = {
       add: (x, z, rot) => this.renderer.addGroundHole(x, z, rot),
@@ -264,7 +272,7 @@ class GameApp {
     this.switchScheduleUI = new SwitchScheduleUI(this.worldMap);
     this.switchScheduleUI.onScheduleChanged = (tile) => {
       if (tile.type.startsWith('scissors_crossing')) {
-        const origin = this.worldMap.resolveCrossingOrigin(tile.x, tile.z);
+        const origin = this.worldMap.resolveCrossingOrigin(tile.x, tile.z, tile.layer);
         if (origin) {
           origin.switchSchedule = tile.switchSchedule;
         }
@@ -362,16 +370,17 @@ class GameApp {
     };
 
     // 毎年3月31日 23:59 決算確定・税額通知イベント
-    this.timeManager.events.onFiscalYearEnd = () => {
+    this.timeManager.events.onFiscalYearEnd = (fiscalYear) => {
       const allTiles = this.worldMap.getAllTiles();
       const trackCount = allTiles.filter(t => isTrackLikeType(t.type)).length;
-      const stationCount = allTiles.filter(t => t.type.startsWith('station')).length;
+      // 貨物駅や信号場を含むすべての駅施設を課税対象に集計
+      const stationCount = allTiles.filter(t => WorldMap.isStationTileType(t.type)).length;
       // 【固定資産税脱税防止】線路上の列車だけでなく、車庫（in_depot）に保管中の全保有車両を課税対象に集計
       const totalCars = this.fleetRegistry.length > 0
         ? this.fleetRegistry.reduce((sum, f) => sum + f.cars, 0)
         : this.trainManager.getTrains().reduce((sum, t) => sum + t.carCount, 0);
 
-      const report = this.economy.assessAnnualTax(trackCount, stationCount, totalCars);
+      const report = this.economy.assessAnnualTax(trackCount, stationCount, totalCars, fiscalYear);
       this.uiManager.showFiscalReportToast(report);
     };
 
@@ -382,32 +391,38 @@ class GameApp {
     };
 
     // 月次維持費・走行費用引き落としイベント
-    this.timeManager.events.onMonthPassed = () => {
+    this.timeManager.events.onMonthPassed = (year, month) => {
+      this.economy.syncDate(year, month, this.timeManager.day);
       const allTiles = this.worldMap.getAllTiles();
       const trackCount = allTiles.filter(t => isTrackLikeType(t.type)).length;
-      const trainRunningCost = this.trainManager.getTrains().reduce(
-        (sum, t) => sum + getRunningCostPerDay(t.model, t.carCount) * 30,
-        0
-      );
       // 駅および信号場の月額維持管理費（ホーム数×20万円、信号場×2万円）を集計
       const stationMaintenance = this.worldMap.stationManager.getStations().reduce(
         (sum, s) => sum + s.maintenance,
         0
       );
-      const maint = trackCount * 500000 + trainRunningCost + stationMaintenance;
+      // ※列車運行維持費は1区間走行ごとに乗車率75%損益分岐モデルでリアルタイム計上されるため、月次は線路・駅維持費を計上
+      const maint = trackCount * 500000 + stationMaintenance;
       this.economy.spendFunds(maint, false);
-      this.trainManager.deductPeriodicOperatingCosts();
       // 【今期収支インフレ解消】月替わりで当期収支アキュムレータをリセット
       this.economy.resetPeriodStats();
     };
 
-    // 毎日 00:00: 日次更新（乗降客数リセット・需要エンジンキャッシュクリアによる都市発展追従）
-    this.timeManager.events.onDayPassed = () => {
+    // 毎日 00:00: 日次更新（乗降客数リセット・需要エンジンキャッシュクリアによる都市発展追従・日付同期）
+    this.timeManager.events.onDayPassed = (year, month, day) => {
+      this.economy.syncDate(year, month, day);
       this.worldMap.resetDailyStationPassengers();
       this.demandEngine.clearCache();
     };
 
-    // 毎日 17:00: 工業施設による商品コンテナ自動生産 ＆ 最寄り貨物駅への自動追加
+    // 5分毎更新: 旅客駅の待機乗客補充（1時間あたりの発生数を12等分し、5分に1回 1/12 ずつ自然に集客）
+    this.timeManager.events.onFiveMinutesPassed = (hour) => {
+      this.trainManager.updateFiveMinuteStationPassengers(
+        hour,
+        (x, z, h) => this.demandEngine.getDemandMultiplier(h, x, z)
+      );
+    };
+
+    // 毎時更新: 17:00工業施設の商品コンテナ自動生産
     this.timeManager.events.onHourPassed = (hour) => {
       if (hour === 17) {
         const updatedStations = this.cargoSystem.processDailyIndustrialProduction(this.worldMap);
@@ -465,26 +480,49 @@ class GameApp {
     };
 
     this.uiManager.onCameraModeToggled = () => {
-      if (this.cameraManager.viewMode === 'quarter_view') {
-        const target = this.trainManager.getFollowTarget(0);
-        if (target) {
-          this.cameraManager.setCabViewMode(target);
-          this.uiManager.setCameraModeUI('cab');
-          this.audioManager.startCabMotorSound(target.speed ?? 0);
-        } else {
-          alert('運行中の列車がありません。先に列車を購入・配置してください。');
-        }
+      if (this.cameraManager.viewMode === 'cab_view') {
+        this.exitCabView();
       } else {
-        this.cameraManager.setQuarterViewMode();
-        this.uiManager.setCameraModeUI('orbit');
-        this.audioManager.stopCabMotorSound();
+        const trains = this.trainManager.getTrains();
+        if (trains.length === 0) {
+          alert('運行中の列車がありません。先に列車を購入・配置してください。');
+          return;
+        }
+        // 乗車対象列車の選択モーダルを表示
+        this.uiManager.showCabTrainSelectModal(trains, (trainId) => {
+          this.enterCabView(trainId);
+        });
       }
     };
 
     this.uiManager.onExitCab = () => {
-      this.cameraManager.setQuarterViewMode();
-      this.uiManager.setCameraModeUI('orbit');
-      this.audioManager.stopCabMotorSound();
+      this.exitCabView();
+    };
+
+    // 前面展望中: 前の列車に乗り換え
+    this.uiManager.onCabPrevRequested = () => {
+      const trains = this.trainManager.getTrains();
+      if (trains.length === 0) return;
+      const currentIdx = trains.findIndex(t => t.id === this.cabTargetTrainId);
+      const prevIdx = currentIdx <= 0 ? trains.length - 1 : currentIdx - 1;
+      this.enterCabView(trains[prevIdx].id);
+    };
+
+    // 前面展望中: 次の列車に乗り換え
+    this.uiManager.onCabNextRequested = () => {
+      const trains = this.trainManager.getTrains();
+      if (trains.length === 0) return;
+      const currentIdx = trains.findIndex(t => t.id === this.cabTargetTrainId);
+      const nextIdx = (currentIdx === -1 || currentIdx >= trains.length - 1) ? 0 : currentIdx + 1;
+      this.enterCabView(trains[nextIdx].id);
+    };
+
+    // 前面展望中: 列車選択モーダルを開く
+    this.uiManager.onCabSelectRequested = () => {
+      const trains = this.trainManager.getTrains();
+      this.uiManager.showCabTrainSelectModal(trains, (trainId) => {
+        this.enterCabView(trainId);
+      });
     };
 
     this.uiManager.onSaveRequested = () => {
@@ -496,25 +534,27 @@ class GameApp {
     };
 
     // ② ポイント切り替えハンドラ
-    this.uiManager.onTogglePointSwitch = (x, z) => {
-      const hub = this.worldMap.resolveSwitchHub(x, z);
+    this.uiManager.onTogglePointSwitch = (x, z, layer) => {
+      const targetLayer = layer ?? this.selectedTilePos?.layer ?? this.worldMap.activeLayer;
+      const hub = this.worldMap.resolveSwitchHub(x, z, targetLayer);
       if (!hub) return;
-      const hubLayer = (hub.layer ?? this.worldMap.activeLayer) as GridLayer;
+      const hubLayer = (hub.layer ?? targetLayer) as GridLayer;
       // 【脱線防止安全ガード】列車が分岐器上を通過・在線中の強制切り替えを禁止
       if (this.trainManager.isTileOccupiedByTrain(hub.x, hub.z, hubLayer)) {
         alert('列車が分岐器上を通過・在線中のため、進路を切り替えできません。');
         return;
       }
-      this.worldMap.togglePointSwitch(hub.x, hub.z);
+      this.worldMap.togglePointSwitch(hub.x, hub.z, hubLayer);
       this.uiManager.showInspector(hub, hub);
       this.audioManager.playBuildSound();
     };
 
     // ③ シーサスクロッシング開通状態切り替えハンドラ
-    this.uiManager.onCycleCrossing = (x, z) => {
-      const clicked = this.worldMap.getTile(x, z, this.worldMap.activeLayer) || this.worldMap.getTile(x, z);
+    this.uiManager.onCycleCrossing = (x, z, layer) => {
+      const targetLayer = (layer ?? this.selectedTilePos?.layer ?? this.worldMap.activeLayer) as GridLayer;
+      const clicked = this.worldMap.getTile(x, z, targetLayer) || this.worldMap.getTile(x, z);
       if (!clicked || !clicked.groupOrigin) return;
-      const cLayer = (clicked.layer ?? this.worldMap.activeLayer) as GridLayer;
+      const cLayer = (clicked.layer ?? targetLayer) as GridLayer;
       const origin = this.worldMap.getTile(clicked.groupOrigin.x, clicked.groupOrigin.z, cLayer) || this.worldMap.getTile(clicked.groupOrigin.x, clicked.groupOrigin.z);
       if (!origin) return;
 
@@ -538,7 +578,7 @@ class GameApp {
         }
       }
 
-      this.worldMap.cycleCrossingState(x, z);
+      this.worldMap.cycleCrossingState(x, z, cLayer);
       const updatedTile = this.worldMap.getTile(x, z, cLayer) || this.worldMap.getTile(x, z);
       if (updatedTile) {
         this.uiManager.showInspector(updatedTile);
@@ -558,7 +598,7 @@ class GameApp {
       this.uiManager.closeInspector();
       let targetTile = tile;
       if (tile.type.startsWith('scissors_crossing')) {
-        const origin = this.worldMap.resolveCrossingOrigin(tile.x, tile.z);
+        const origin = this.worldMap.resolveCrossingOrigin(tile.x, tile.z, tile.layer);
         if (origin) targetTile = origin;
       }
       this.switchScheduleUI.open(targetTile);
@@ -603,6 +643,12 @@ class GameApp {
       // 吸収された follower を fleetRegistry から除去
       this.fleetRegistry = this.fleetRegistry.filter(f => f.activeTrainId !== followerTrain.id);
       this.syncFleetStats();
+
+      // 選択中列車が吸収された場合、統合先親編成（leader）に安全にフォーカスを引き継ぐ
+      if (this.selectedTrainId === followerTrain.id) {
+        this.selectedTrainId = leaderTrain.id;
+        this.uiManager.showTrainInspector(leaderTrain);
+      }
     };
 
     // ⑤ & ⑦ 車両購入確定ハンドラ: 購入後、車両基地（fleetRegistry）に配属（1〜10両対応）
@@ -706,6 +752,9 @@ class GameApp {
         item.totalPassengers = (item.totalPassengers ?? 0) + train.totalPassengers;
         item.totalRevenue = (item.totalRevenue ?? 0) + train.totalRevenue;
       }
+      if (this.cabTargetTrainId === item.activeTrainId) {
+        this.exitCabView();
+      }
       this.trainManager.removeTrain(item.activeTrainId);
       item.status = 'in_depot';
       item.activeTrainId = undefined;
@@ -761,6 +810,9 @@ class GameApp {
       if (fleetItem) {
         fleetItem.status = 'in_depot';
         fleetItem.activeTrainId = undefined;
+      }
+      if (this.cabTargetTrainId === trainId) {
+        this.exitCabView();
       }
       if (this.trainManager.removeTrain(trainId)) {
         this.audioManager.playDemolishSound();
@@ -836,7 +888,7 @@ class GameApp {
         this.audioManager.playBuildSound();
         const updatedTile = this.worldMap.getTile(x, z, stLayer) || this.worldMap.getTile(x, z);
         if (updatedTile) {
-          const stData = this.worldMap.getStationAggregateData(x, z);
+          const stData = this.worldMap.getStationAggregateData(x, z, stLayer);
           this.uiManager.showInspector(updatedTile, undefined, targetLen, stData);
           if (updatedTile.type.startsWith('cargo_station')) {
             const stationTiles = this.worldMap.getStationTiles(x, z, stLayer);
@@ -851,13 +903,14 @@ class GameApp {
     };
 
     // 駅名・信号場名のリネームコールバック
-    this.uiManager.onRenameStation = (x: number, z: number, newName: string) => {
-      const ok = this.worldMap.renameStation(x, z, newName, this.worldMap.activeLayer);
+    this.uiManager.onRenameStation = (x: number, z: number, newName: string, layer?: GridLayer) => {
+      const targetLayer = layer ?? this.selectedTilePos?.layer ?? this.worldMap.activeLayer;
+      const ok = this.worldMap.renameStation(x, z, newName, targetLayer);
       if (ok) {
-        const tile = this.worldMap.getTile(x, z, this.worldMap.activeLayer);
+        const tile = this.worldMap.getTile(x, z, targetLayer);
         if (tile) {
-          const runLength = this.worldMap.getStationRunLength(x, z);
-          const stData = this.worldMap.getStationAggregateData(x, z);
+          const runLength = this.worldMap.getStationRunLength(x, z, targetLayer);
+          const stData = this.worldMap.getStationAggregateData(x, z, targetLayer);
           this.uiManager.showInspector(tile, undefined, runLength, stData);
         }
       }
@@ -917,9 +970,36 @@ class GameApp {
     this.uiManager.setFloorActive(layer);
     this.applyLayerSlicing(layer);
     this.updateRotationHint(this.uiManager.getActiveTool());
+    this.clearHoverStationGhost();
     if (playSound) {
       this.audioManager.playSelectSound();
     }
+  }
+
+  /**
+   * 指定した列車の運転席・前面展望（車窓モード）へ切り替える
+   */
+  public enterCabView(trainId: number) {
+    const train = this.trainManager.getTrainById(trainId);
+    if (!train) return;
+    const target = this.trainManager.getFollowTargetByTrainId(trainId);
+    if (!target) return;
+
+    this.cabTargetTrainId = trainId;
+    this.cameraManager.setCabViewMode(target);
+    this.uiManager.setCameraModeUI('cab');
+    this.uiManager.setCabTrainName(`${train.name} (${train.model.name})`);
+    this.audioManager.startCabMotorSound(target.speed ?? 0);
+  }
+
+  /**
+   * 前面展望モードを終了し、全体視点（クォータービュー）へ安全復帰する
+   */
+  public exitCabView() {
+    this.cabTargetTrainId = null;
+    this.cameraManager.setQuarterViewMode();
+    this.uiManager.setCameraModeUI('orbit');
+    this.audioManager.stopCabMotorSound();
   }
 
   /**
@@ -1022,6 +1102,7 @@ class GameApp {
     }
     // 駅系
     if (tool === 'station-small' || tool === 'station-elevated') {
+      if (tool === 'station-elevated') return 'station-elevated';
       return layer >= 2 ? 'station-elevated' : 'station-small';
     }
     return tool;
@@ -1190,12 +1271,19 @@ class GameApp {
       if (segTool === 'rail-straight' && this.worldMap.isTunnelSection(seg.x, seg.z, seg.layer)) {
         segTool = 'rail-tunnel';
       }
+      let segRotation = seg.rotation;
+      if (seg.curveDir) {
+        const curveIdx = CURVE_DIR_ORDER.indexOf(seg.curveDir);
+        if (curveIdx !== -1) {
+          segRotation = curveIdx;
+        }
+      }
       const item: PendingItem = {
         tool: segTool,
         x: seg.x,
         z: seg.z,
         layer: seg.layer,
-        rotation: seg.rotation,
+        rotation: segRotation,
         ghost: null
       };
       this.pendingItems.push(item);
@@ -1324,6 +1412,10 @@ class GameApp {
         }
       }
     }
+    if (this.hoveredTile) {
+      this.clearHoverStationGhost();
+      this.updateHoverStationGhost(this.hoveredTile.x, this.hoveredTile.z);
+    }
     this.audioManager.playSelectSound();
     this.updateRotationHint(tool);
   }
@@ -1367,12 +1459,14 @@ class GameApp {
 
         // ゴースト再生成
         this.renderer.scene.remove(this.pendingTrainDeploy.ghost);
+        disposeHierarchy(this.pendingTrainDeploy.ghost);
         const newGhost = this.createTrainGhost(
           item.model,
           item.cars,
           this.pendingTrainDeploy.directionIdx,
           this.pendingTrainDeploy.x,
-          this.pendingTrainDeploy.z
+          this.pendingTrainDeploy.z,
+          this.pendingTrainDeploy.layer
         );
         this.renderer.scene.add(newGhost);
         this.pendingTrainDeploy.ghost = newGhost;
@@ -1443,6 +1537,10 @@ class GameApp {
         }
       }
     }
+    if (this.hoveredTile) {
+      this.clearHoverStationGhost();
+      this.updateHoverStationGhost(this.hoveredTile.x, this.hoveredTile.z);
+    }
 
     this.updateRotationHint(tool);
   }
@@ -1490,10 +1588,18 @@ class GameApp {
       this.updateHover();
     });
 
-    // マウスアップで一括敷設ドラッグ確定
-    window.addEventListener('mouseup', () => {
+    // マウスアップで一括敷設ドラッグ確定（UI要素上で離された場合はドラッグを安全にキャンセル）
+    window.addEventListener('mouseup', (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isOverUI = target ? !!target.closest('#build-toolbar, #tool-submenu, #rotation-hint, #station-length-selector, #floor-slicer, header, aside, .modal, .modal-backdrop, #mobile-action-dock') : false;
+
       if (this.isDraggingTrack) {
-        this.finishDragPlacement();
+        if (isOverUI) {
+          // UIボタンやパネル上でマウスを離した場合はドラッグ確定を行わず破棄
+          this.cancelPendingPlacements();
+        } else {
+          this.finishDragPlacement();
+        }
         this.isDraggingTrack = false;
         this.dragStartTile = null;
         return;
@@ -1551,8 +1657,8 @@ class GameApp {
         }
       } else if (e.key === 'm' || e.key === 'M') {
         this.toggleInfiniteFunds();
-      } else if (e.key >= '0' && e.key <= '4') {
-        // 数字キー 0〜4 で時間進行速度を即座に切り替え (0:停止, 1:等速, 2:3倍, 3:10倍, 4:超高速)
+      } else if (e.key >= '0' && e.key <= '5') {
+        // 数字キー 0〜5 で時間進行速度を即座に切り替え (0:停止, 1:等速, 2:3倍, 3:10倍, 4:超高速, 5:極超高速 12時間/秒)
         const speed = parseInt(e.key, 10);
         this.timeManager.setSpeedLevel(speed as SpeedLevel);
         this.uiManager.setSpeedUI(speed);
@@ -1563,7 +1669,7 @@ class GameApp {
           if (switchTile) {
             let target = switchTile;
             if (switchTile.type.startsWith('scissors_crossing')) {
-              const orig = this.worldMap.resolveCrossingOrigin(switchTile.x, switchTile.z);
+              const orig = this.worldMap.resolveCrossingOrigin(switchTile.x, switchTile.z, switchTile.layer);
               if (orig) target = orig;
             }
             this.switchScheduleUI.open(target);
@@ -1573,7 +1679,7 @@ class GameApp {
 
         // ダイヤ設定UIを開くショートカット（駅、分岐器、シーサスクロッシングに対応）
         if (this.selectedTilePos) {
-          const t = this.worldMap.getTile(this.selectedTilePos.x, this.selectedTilePos.z);
+          const t = this.worldMap.getTile(this.selectedTilePos.x, this.selectedTilePos.z, this.selectedTilePos.layer);
           if (t) {
             if (WorldMap.isStationTileType(t.type)) {
               this.scheduleUI.open(t);
@@ -1582,7 +1688,7 @@ class GameApp {
               this.switchScheduleUI.open(t);
               return;
             } else if (t.type.startsWith('scissors_crossing')) {
-              const orig = this.worldMap.resolveCrossingOrigin(t.x, t.z);
+              const orig = this.worldMap.resolveCrossingOrigin(t.x, t.z, this.selectedTilePos.layer);
               this.switchScheduleUI.open(orig || t);
               return;
             }
@@ -1714,12 +1820,18 @@ class GameApp {
       const baseHeight = layerToHeight(activeLayer);
 
       // トンネル区間判定: 地下階層、または山岳地表より下の階層、またはトンネルツール
-      const isTunnelSection = this.worldMap.isTunnelSection(tx, tz, activeLayer) || tool === 'rail-tunnel';
+      // ※ 駅・信号場・貨物駅は山岳トンネル地中埋没の対象外とし、地上1Fなら山岳地表高さを反映
+      const isStationTool = tool === 'station-small' || tool === 'station-elevated' || tool === 'signal-yard' || tool === 'cargo-station';
+      const isTunnelSection = !isStationTool && (this.worldMap.isTunnelSection(tx, tz, activeLayer) || tool === 'rail-tunnel');
 
       // スライサー階層の操作面高さ:
-      // トンネル区間（山岳トンネル含む）の場合は山を這い上がらず基準高さ（baseHeight）、通常平地1Fなら標高を反映
-      const elevOffset = (activeLayer === 1 && !isTunnelSection) ? groundElevY : 0;
-      const finalY = baseHeight + elevOffset;
+      // 高架駅ツール選択時にスライサー1Fの場合は2F高さ(3m)に合わせる
+      let effectiveBaseHeight = baseHeight;
+      if (tool === 'station-elevated' && activeLayer === 1) {
+        effectiveBaseHeight = layerToHeight(2);
+      }
+      const elevOffset = (activeLayer === 1 && !isTunnelSection && tool !== 'station-elevated') ? groundElevY : 0;
+      const finalY = effectiveBaseHeight + elevOffset;
 
       this.hoverPlane.position.set(tx * WorldMap.TILE_SIZE, finalY + 0.05, tz * WorldMap.TILE_SIZE);
       this.hoverPlane.visible = true;
@@ -1749,6 +1861,13 @@ class GameApp {
         this.groundDashedGuide.visible = false;
       }
 
+      // 駅ツール選択中のホバーゴースト追従
+      if (isStationTool) {
+        this.updateHoverStationGhost(tx, tz);
+      } else {
+        this.clearHoverStationGhost();
+      }
+
       // 列車配置モード中のホバーゴースト追従
       if (this.deployingFleetId && !this.pendingTrainDeploy) {
         this.updateHoverTrainGhost(tx, tz);
@@ -1765,6 +1884,7 @@ class GameApp {
     this.hoverPlane.visible = false;
     this.groundDashedGuide.visible = false;
     this.hoveredTile = null;
+    this.clearHoverStationGhost();
     if (this.deployingFleetId && !this.pendingTrainDeploy) {
       this.clearHoverTrainGhost();
     }
@@ -1969,7 +2089,8 @@ class GameApp {
     const ghost = this.createGhostMesh(item.tool, item.rotation, item.stationPart ?? 'single', branchSide, platformSide, targetLayer, item.x, item.z);
     if (ghost) {
       const baseHeight = layerToHeight(targetLayer);
-      const isTunnel = this.worldMap.isTunnelSection(item.x, item.z, targetLayer) || item.tool === 'rail-tunnel';
+      const isStationOrYard = item.tool === 'station-small' || item.tool === 'station-elevated' || item.tool === 'signal-yard' || item.tool === 'cargo-station';
+      const isTunnel = !isStationOrYard && (this.worldMap.isTunnelSection(item.x, item.z, targetLayer) || item.tool === 'rail-tunnel');
       const elevY = (targetLayer === 1 && !isTunnel) ? this.worldMap.getElevationOffset(item.x, item.z) : 0;
       ghost.position.set(item.x * WorldMap.TILE_SIZE, baseHeight + elevY, item.z * WorldMap.TILE_SIZE);
       this.renderer.scene.add(ghost);
@@ -2094,6 +2215,68 @@ class GameApp {
     }
   }
 
+  /**
+   * 駅・信号場・貨物駅のホバー追従プレビューゴースト更新
+   */
+  private updateHoverStationGhost(x: number, z: number) {
+    const tool = this.uiManager.getActiveTool();
+    const isStationOrYard = tool === 'station-small' || tool === 'station-elevated' || tool === 'signal-yard' || tool === 'cargo-station';
+    if (!isStationOrYard || this.pendingItems.length > 0) {
+      this.clearHoverStationGhost();
+      return;
+    }
+
+    let targetLayer: GridLayer = this.worldMap.activeLayer;
+    if (tool === 'station-elevated' && targetLayer === 1) {
+      targetLayer = 2;
+    }
+
+    const len = this.currentStationLength;
+    const rot = this.currentRotation;
+    const side = this.currentStationSide;
+    const cacheKey = `${tool}_${x}_${z}_${len}_${rot}_${side}_${targetLayer}`;
+    if (this.hoverStationGhost && this.hoverStationCacheKey === cacheKey) {
+      return;
+    }
+
+    this.clearHoverStationGhost();
+
+    const group = new THREE.Group();
+    const axis = rot % 2;
+    const stepX = axis === 1 ? 1 : 0;
+    const stepZ = axis === 1 ? 0 : 1;
+    const baseHeight = layerToHeight(targetLayer);
+
+    for (let i = 0; i < len; i++) {
+      const tx = x + stepX * i;
+      const tz = z + stepZ * i;
+      const part = (len === 1) ? 'single' : (i === 0 ? 'start' : (i === len - 1 ? 'end' : 'mid'));
+      const mesh = this.createGhostMesh(tool, rot, part, this.currentSwitchSide, side, targetLayer, tx, tz);
+      if (mesh) {
+        const elevY = (targetLayer === 1) ? this.worldMap.getElevationOffset(tx, tz) : 0;
+        mesh.position.set(stepX * i * WorldMap.TILE_SIZE, elevY, stepZ * i * WorldMap.TILE_SIZE);
+        group.add(mesh);
+      }
+    }
+
+    group.position.set(x * WorldMap.TILE_SIZE, baseHeight, z * WorldMap.TILE_SIZE);
+    this.renderer.scene.add(group);
+    this.hoverStationGhost = group;
+    this.hoverStationCacheKey = cacheKey;
+  }
+
+  /**
+   * ホバー追従駅ゴーストの消去
+   */
+  private clearHoverStationGhost() {
+    if (this.hoverStationGhost) {
+      this.renderer.scene.remove(this.hoverStationGhost);
+      disposeHierarchy(this.hoverStationGhost);
+      this.hoverStationGhost = null;
+      this.hoverStationCacheKey = '';
+    }
+  }
+
   private cancelPendingPlacements() {
     for (const item of this.pendingItems) {
       if (item.ghost) {
@@ -2109,12 +2292,26 @@ class GameApp {
       this.pendingTrainDeploy = null;
     }
     this.clearHoverTrainGhost();
+    this.clearHoverStationGhost();
+
+    if (this.dragGhostGroup) {
+      this.renderer.scene.remove(this.dragGhostGroup);
+      disposeHierarchy(this.dragGhostGroup);
+      this.dragGhostGroup = null;
+    }
+    this.dragCurrentSegments = [];
+    this.isDraggingTrack = false;
+    this.dragStartTile = null;
+    this.mobileDragStartTile = null;
 
     if (this.deployingFleetId) {
       this.deployingFleetId = null;
-      this.uiManager.setRotationHint(false);
     }
 
+    this.hoverPlane.visible = false;
+    this.groundDashedGuide.visible = false;
+    this.hoveredTile = null;
+    this.uiManager.setRotationHint(false);
     this.uiManager.setPlacementButtonsVisible(false);
   }
 
@@ -2144,6 +2341,10 @@ class GameApp {
     };
 
     let curLayer: GridLayer = this.worldMap.activeLayer;
+    // 高架駅ツール選択時にスライサーが地上1Fの場合、自動的に地上2F（高架階層）として扱う
+    if (tool === 'station-elevated' && curLayer === 1) {
+      curLayer = 2;
+    }
     // 通常勾配線路は下位階層から直上階層へ上るスロープ（1F〜4Fから敷設可能、最上階5Fのみ不可）
     if (tool === 'rail-slope') {
       if (curLayer >= 5) {
@@ -2195,6 +2396,9 @@ class GameApp {
         this.pendingItems = this.pendingItems.filter(p => !toRemove.includes(p));
         this.uiManager.setPlacementButtonsVisible(this.pendingItems.length > 0);
         this.updateRotationHint(tool);
+        if (this.pendingItems.length === 0 && this.hoveredTile) {
+          this.updateHoverStationGhost(this.hoveredTile.x, this.hoveredTile.z);
+        }
         return;
       }
 
@@ -2252,6 +2456,7 @@ class GameApp {
         this.pendingItems.push(item);
         this.refreshGhostFor(item);
       }
+      this.clearHoverStationGhost();
       this.uiManager.setPlacementButtonsVisible(true);
       this.updateRotationHint(tool);
       return;
@@ -2835,12 +3040,12 @@ class GameApp {
       const tile = this.worldMap.getTile(x, z, curLayer);
       if (tile) {
         this.selectedTrainId = null;
-        this.selectedTilePos = { x, z };
+        this.selectedTilePos = { x, z, layer: curLayer };
         this.cameraManager.stopTracking();
-        const hub = this.worldMap.resolveSwitchHub(x, z);
+        const hub = this.worldMap.resolveSwitchHub(x, z, curLayer);
         const isStationOrYard = tile.type.startsWith('station') || tile.type === 'signal_yard' || tile.type.startsWith('cargo_station');
-        const runLength = isStationOrYard ? this.worldMap.getStationRunLength(x, z) : undefined;
-        const stData = isStationOrYard ? this.worldMap.getStationAggregateData(x, z) : undefined;
+        const runLength = isStationOrYard ? this.worldMap.getStationRunLength(x, z, curLayer) : undefined;
+        const stData = isStationOrYard ? this.worldMap.getStationAggregateData(x, z, curLayer) : undefined;
         this.uiManager.showInspector(tile, hub, runLength, stData);
       }
       return;
@@ -2850,8 +3055,18 @@ class GameApp {
     if (tool === 'demolish-train') {
       const train = this.raycastTrain();
       if (train) {
+        // fleetRegistry内のステータスも戻す
+        const fleetItem = this.fleetRegistry.find(f => f.activeTrainId === train.id);
+        if (fleetItem) {
+          fleetItem.status = 'in_depot';
+          fleetItem.activeTrainId = undefined;
+        }
         this.trainManager.removeTrain(train.id);
         this.audioManager.playDemolishSound();
+        if (this.selectedTrainId === train.id) {
+          this.selectedTrainId = null;
+          this.uiManager.closeInspector();
+        }
       } else {
         alert('この位置に列車がありません。撤去したい列車をクリックしてください。');
       }
@@ -2924,6 +3139,7 @@ class GameApp {
       }
       const painted = this.zoneManager.paintZone(x, z, ZONE_TOOL_TYPE[tool]!, 2);
       this.refreshZoneOverlay(painted.map(c => ({ x: c.x, z: c.z })));
+      this.demandEngine.clearCache();
       this.audioManager.playBuildSound();
       this.miniMap.requestStaticUpdate();
       return;
@@ -2931,6 +3147,7 @@ class GameApp {
     if (tool === 'zone-clear') {
       this.zoneManager.clearZone(x, z, 2);
       this.refreshZoneOverlayClear(x, z, 2);
+      this.demandEngine.clearCache();
       this.audioManager.playDemolishSound();
       this.miniMap.requestStaticUpdate();
       return;
@@ -3235,6 +3452,12 @@ class GameApp {
 
     // 3次元地形（山岳段丘・河川/水域）のレンダリング構築
     this.terrainRenderer.build(this.gridManager, this.renderer.scene);
+
+    // 初期配置された旅客駅の待機乗客数を周囲5マスの建物から算出・セット
+    this.trainManager.updateHourlyStationPassengers(
+      this.timeManager.hour,
+      (x, z, h) => this.demandEngine.getDemandMultiplier(h, x, z)
+    );
   }
 
   /**
@@ -3253,6 +3476,9 @@ class GameApp {
         if (t.isCargoYard) {
           this.addCargoYardMarker(t.x, t.z, (t.layer ?? 1) as GridLayer);
         }
+        if (t.isCargoYard || t.type.startsWith('cargo_station')) {
+          this.updateCargoYardVisual(t.x, t.z, (t.layer ?? 1) as GridLayer);
+        }
       }
       // ゲーム内日時の復元
       const savedTime = localStorage.getItem('saikyo_time_data');
@@ -3269,6 +3495,7 @@ class GameApp {
               this.timeManager.setSpeedLevel(t.speedLevel as SpeedLevel);
               this.uiManager.setSpeedUI(t.speedLevel);
             }
+            this.economy.syncDate(this.timeManager.year, this.timeManager.month, this.timeManager.day);
           }
         } catch (e) {
           console.warn('Failed to restore time data:', e);
@@ -3310,6 +3537,35 @@ class GameApp {
           console.error('Failed to restore fleetRegistry:', e);
         }
       }
+
+      // 【データ整合性修復】運行中の列車が車両基地台帳（fleetRegistry）に未登録の場合、自動補完登録
+      for (const t of this.trainManager.getTrains()) {
+        const hasFleet = this.fleetRegistry.some(f => f.activeTrainId === t.id);
+        if (!hasFleet) {
+          const fleetItem: FleetItem = {
+            id: t.fleetId || `fleet-${this.nextFleetId++}`,
+            name: t.name,
+            model: t.model,
+            cars: t.carCount,
+            status: 'deployed',
+            activeTrainId: t.id,
+            totalPassengers: t.totalPassengers,
+            totalRevenue: t.totalRevenue
+          };
+          this.fleetRegistry.push(fleetItem);
+        }
+      }
+      // 逆に台帳で deployed なのに列車が存在しない場合は in_depot に是正
+      for (const f of this.fleetRegistry) {
+        if (f.status === 'deployed' && f.activeTrainId !== undefined) {
+          const exists = this.trainManager.getTrainById(f.activeTrainId);
+          if (!exists) {
+            f.status = 'in_depot';
+            f.activeTrainId = undefined;
+          }
+        }
+      }
+      this.syncFleetStats();
 
       // レガシーセーブデータ等で列車データがなかった場合のみフォールバックで初期列車を生成
       if (!trainsLoaded && this.fleetRegistry.length === 0) {
@@ -3408,8 +3664,13 @@ class GameApp {
     this.terrainRenderer.clear(this.renderer.scene);
     this.trainManager.removeAllTrains();
     this.fleetRegistry = [];
+    this.worldLabelManager.clear();
     this.economy.resetAll();
+    this.timeManager.deserialize({ year: 2026, month: 4, day: 1, hour: 6, minute: 0, speedLevel: 1 });
+    this.uiManager.setSpeedUI(1);
+    this.economy.syncDate(2026, 4, 1);
     this.zoneManager.clearAll();
+    this.demandEngine.clearCache();
     for (const mesh of this.zoneOverlayMeshes.values()) {
       this.zoneOverlayGroup.remove(mesh);
     }
@@ -3421,11 +3682,12 @@ class GameApp {
     this.cameraManager.stopTracking();
     this.cameraManager.setQuarterViewMode();
     this.uiManager.setCameraModeUI('orbit');
+    this.audioManager.stopCabMotorSound();
 
     // 財務レポートの数値を初期化
     const allTiles = this.worldMap.getAllTiles();
     const trackCount = allTiles.filter(t => isTrackLikeType(t.type)).length;
-    const stationCount = allTiles.filter(t => t.type.includes('station')).length;
+    const stationCount = allTiles.filter(t => WorldMap.isStationTileType(t.type)).length;
     const reportData = this.economy.getFinancialReport(trackCount, this.trainManager.getTrains().length, stationCount);
     this.uiManager.updateFinancialReport(reportData);
 
@@ -3444,6 +3706,7 @@ class GameApp {
       this.trainManager.update(deltaTime, 1, () => {}, this.timeManager.hour, this.timeManager.minute);
       this.cameraManager.update(deltaTime);
       this.renderer.render(this.cameraManager.activeCamera);
+      this.worldLabelManager.clear();
       return;
     }
 
@@ -3477,6 +3740,9 @@ class GameApp {
         onStationCargoChanged: (x, z, layer) => {
           this.updateCargoYardVisual(x, z, (layer ?? 1) as GridLayer);
         }
+      },
+      (cost) => {
+        this.economy.spendFunds(cost, false);
       }
     );
 
@@ -3495,9 +3761,11 @@ class GameApp {
     }
 
     // 3. City Growth
-    // 【変更】1日1回正午に発展させるため、hour, minute, day を渡す
+    // 1日1回正午以降に都市を発展させ、人口加算・ミニマップ更新・需要キャッシュ更新を連動
     this.cityGrowth.update(this.timeManager.hour, this.timeManager.minute, this.timeManager.day, (newPop) => {
       this.economy.addPopulation(newPop);
+      this.miniMap.requestStaticUpdate();
+      this.demandEngine.clearCache();
     });
 
     // 4. Camera (列車追従・クォータービュー補間)
@@ -3527,11 +3795,16 @@ class GameApp {
     );
 
     if (this.cameraManager.viewMode === 'cab_view') {
-      const target = this.trainManager.getFollowTarget(0);
+      const target = this.cabTargetTrainId !== null
+        ? this.trainManager.getFollowTargetByTrainId(this.cabTargetTrainId)
+        : this.trainManager.getFollowTarget(0);
       if (target) {
         this.cameraManager.setCabViewMode(target);
         this.uiManager.updateCabSpeed(target.speed ?? 0);
         this.audioManager.updateCabSpeed(target.speed ?? 0);
+      } else {
+        // 追従対象列車が撤去または消滅した場合は自由視点に安全復帰
+        this.exitCabView();
       }
     }
 
@@ -3548,10 +3821,10 @@ class GameApp {
         this.selectedTrainId = null;
       }
     } else if (this.selectedTilePos !== null) {
-      const tile = this.worldMap.getTile(this.selectedTilePos.x, this.selectedTilePos.z);
-      if (tile && (tile.type.startsWith('station') || tile.type === 'signal_yard')) {
-        const runLength = this.worldMap.getStationRunLength(tile.x, tile.z);
-        const stData = this.worldMap.getStationAggregateData(tile.x, tile.z);
+      const tile = this.worldMap.getTile(this.selectedTilePos.x, this.selectedTilePos.z, this.selectedTilePos.layer);
+      if (tile && (tile.type.startsWith('station') || tile.type === 'signal_yard' || tile.type.startsWith('cargo_station'))) {
+        const runLength = this.worldMap.getStationRunLength(tile.x, tile.z, this.selectedTilePos.layer);
+        const stData = this.worldMap.getStationAggregateData(tile.x, tile.z, this.selectedTilePos.layer);
         this.uiManager.updateStationInspectorDynamicValues(tile, runLength, stData);
       }
     }
@@ -3564,11 +3837,15 @@ class GameApp {
       }
     }
 
-    const allTiles = this.worldMap.getAllTiles();
-    const trackCount = allTiles.filter(t => isTrackLikeType(t.type)).length;
-    const stationCount = allTiles.filter(t => t.type.includes('station')).length;
-    const reportData = this.economy.getFinancialReport(trackCount, this.trainManager.getTrains().length, stationCount);
-    this.uiManager.updateFinancialReport(reportData);
+    // 財務レポートモーダルが開いている場合のみ動的数値を更新（非表示時の全タイル走査・DOM負荷を遮断）
+    const reportModal = document.getElementById('report-modal');
+    if (reportModal && !reportModal.classList.contains('hidden')) {
+      const allTiles = this.worldMap.getAllTiles();
+      const trackCount = allTiles.filter(t => isTrackLikeType(t.type)).length;
+      const stationCount = allTiles.filter(t => WorldMap.isStationTileType(t.type)).length;
+      const reportData = this.economy.getFinancialReport(trackCount, this.trainManager.getTrains().length, stationCount);
+      this.uiManager.updateFinancialReport(reportData);
+    }
 
     // Auto-save
     this.autoSaveTimer += deltaTime;
@@ -3589,6 +3866,15 @@ class GameApp {
 
     // 7. Render
     this.renderer.render(this.cameraManager.activeCamera);
+
+    // 8. 全体視点時の駅待機乗客数および旅客列車乗客数の数字追従表示更新
+    this.worldLabelManager.update(
+      this.cameraManager.activeCamera,
+      this.cameraManager.viewMode,
+      this.currentDisplayLayer,
+      this.worldMap,
+      this.trainManager
+    );
   }
 
   /**

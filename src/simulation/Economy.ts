@@ -97,9 +97,9 @@ export class Economy {
       return true;
     }
 
-    // 建設費・新規投資の場合: 資金が不足（または赤字中）なら購入不可
+    // 建設費・新規投資の場合: 資金が不足（または赤字中）なら購入不可（返金時は無条件で許可）
     if (isConstruction) {
-      if (!this.canInvest || this.funds < amount) {
+      if (amount > 0 && (!this.canInvest || this.funds < amount)) {
         return false; // 資金不足または追加投資ロック
       }
       this.funds -= amount;
@@ -123,7 +123,7 @@ export class Economy {
    * 毎年3月31日 23:59 に呼び出される税額確定処理
    * 前年度の実績から法人税（黒字の30%）および保有資産に応じた固定資産税を算出する
    */
-  public assessAnnualTax(trackTiles: number, stationTiles: number, totalCars: number): {
+  public assessAnnualTax(trackTiles: number, stationTiles: number, totalCars: number, currentYear?: number): {
     fiscalYear: number;
     operatingProfit: number;
     constructionCost: number;
@@ -135,6 +135,9 @@ export class Economy {
     stationTax: number;
     carTax: number;
   } {
+    if (currentYear !== undefined) {
+      this.year = currentYear;
+    }
     const fiscalYear = this.year;
     this.lastSettledYear = fiscalYear;
 
@@ -372,5 +375,14 @@ export class Economy {
     try {
       localStorage.removeItem('stk_3d_economy');
     } catch (e) {}
+  }
+
+  /**
+   * ゲーム内時間（TimeManager）と会計カレンダー（年・月・日）を同期
+   */
+  public syncDate(year: number, month: number, day: number): void {
+    this.year = year;
+    this.month = month;
+    this.day = day;
   }
 }

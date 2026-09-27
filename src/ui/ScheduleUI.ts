@@ -1,4 +1,6 @@
 import { WorldMap, TileData, StationSchedule, TimeZoneRule, createDefaultStationSchedule } from '../simulation/WorldMap';
+import { GridLayer } from '../core/types';
+import { getPatternDepartureMinutes } from '../core/ScheduleEngine';
 
 export type DeviceMode = 'desktop' | 'mobile';
 
@@ -184,7 +186,8 @@ export class ScheduleUI {
 
   public refreshOrClose(): void {
     if (!this.currentTile) return;
-    const still = this.worldMap.getTile(this.currentTile.x, this.currentTile.z);
+    const lyr = (this.currentTile.layer ?? 1) as GridLayer;
+    const still = this.worldMap.getTile(this.currentTile.x, this.currentTile.z, lyr);
     if (!still) this.close();
     else { this.currentTile = still; this.render(); }
   }
@@ -256,23 +259,21 @@ export class ScheduleUI {
     let html = '';
     for (const z of zones) {
       if (z.mode === 'pattern') {
-        // パターンダイヤ: 帯ではなく、時間帯内の毎時指定分にピン（縦線）を描画
-        const patMin = z.patternMinute ?? 0;
+        // パターンダイヤ: 設定された発車間隔・基準分に基づいてピンを描画
         const revClass = z.isReverse ? ' tl-dep-pin-reverse' : '';
         const revTitle = z.isReverse ? ' (折り返し)' : '';
+        const interval = z.patternIntervalMinutes ?? 60;
+        const intHours = Math.floor(interval / 60);
+        const intMins = interval % 60;
+        const intLabel = intHours > 0 && intMins > 0
+          ? `${intHours}時間${intMins}分毎`
+          : intHours > 0
+          ? `${intHours}時間毎`
+          : `${intMins}分毎`;
 
-        for (let h = 0; h < 24; h++) {
-          const m = h * 60 + patMin;
-          let inRange = false;
-          if (z.startMin <= z.endMin) {
-            inRange = m >= z.startMin && m <= z.endMin;
-          } else {
-            // 日またぎ対応
-            inRange = m >= z.startMin || m <= z.endMin;
-          }
-          if (inRange) {
-            html += `<div class="tl-dep-pin-pattern${revClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} パターン発車 (毎時${patMin}分)${revTitle}"></div>`;
-          }
+        const deps = getPatternDepartureMinutes(z);
+        for (const m of deps) {
+          html += `<div class="tl-dep-pin-pattern${revClass}" style="left:${m * this.PIXELS_PER_MIN}px;" title="${this.formatTime(m)} パターン発車 (${intLabel})${revTitle}"></div>`;
         }
       } else {
         // 通過 または 〇分停車: 時間帯の帯を描画
@@ -319,7 +320,7 @@ export class ScheduleUI {
     items.forEach((item, displayOrder) => {
       if (item.type === 'dep') {
         const isRev = schedule.reverseDepartures!.includes(item.min);
-        html += this.buildCardHtml('dep', item.origIdx, null, item.min, 0, 'dep', 0, 0, isRev, displayOrder + 1);
+        html += this.buildCardHtml('dep', item.origIdx, null, item.min, 0, 'dep', 0, 0, 60, isRev, displayOrder + 1);
       } else if (item.data) {
         html += this.buildCardHtml(
           'zone',
@@ -330,6 +331,7 @@ export class ScheduleUI {
           item.data.mode,
           item.data.waitMinutes || 2,
           item.data.patternMinute ?? 0,
+          item.data.patternIntervalMinutes ?? 60,
           !!item.data.isReverse,
           displayOrder + 1
         );
@@ -352,17 +354,20 @@ export class ScheduleUI {
     mode: 'dep' | 'pass' | 'stop' | 'pattern',
     waitMinutes: number,
     patternMinute: number,
+    patternIntervalMinutes: number,
     isReverse: boolean,
     order: number
   ): string {
     const dataAttr = dataType === 'dep' ? `data-type="dep" data-index="${origIdx}"` : `data-type="zone" data-id="${id}"`;
+    const intervalHours = Math.floor((patternIntervalMinutes || 60) / 60);
+    const intervalMins = (patternIntervalMinutes || 60) % 60;
 
     return `
       <div class="sc-detail-card" ${dataAttr}>
         <div class="sc-card-header">
           <select class="sc-type-sel">
             <option value="dep" ${mode === 'dep' ? 'selected' : ''}>${order}. 📍発車時刻指定 (ピン)</option>
-            <option value="pattern" ${mode === 'pattern' ? 'selected' : ''}>${order}. 🔁パターンダイヤ (毎時〇分発車)</option>
+            <option value="pattern" ${mode === 'pattern' ? 'selected' : ''}>${order}. 🔁パターンダイヤ (発車間隔指定)</option>
             <option value="stop" ${mode === 'stop' ? 'selected' : ''}>${order}. ⏹停車時間指定 (時間帯)</option>
             <option value="pass" ${mode === 'pass' ? 'selected' : ''}>${order}. ⏩本線通過 (時間帯)</option>
           </select>
@@ -390,9 +395,13 @@ export class ScheduleUI {
             </div>
           ` : ''}
           ${mode === 'pattern' ? `
-            <div class="sc-pattern-input" style="margin-top:10px; display:flex; align-items:center; gap:8px;">
-              <label>発車指定:</label>
-              毎時 <input type="number" class="sc-pattern-val" min="0" max="59" value="${patternMinute}" style="width:60px; text-align:center;"> 分発車
+            <div class="sc-pattern-input" style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px;">
+              <label style="color:#cbd5e1; font-weight:bold;">発車間隔:</label>
+              <input type="number" class="sc-pattern-hours" min="0" max="23" value="${intervalHours}" style="width:45px; text-align:center;"> 時間
+              <input type="number" class="sc-pattern-mins" min="0" max="59" value="${intervalMins}" style="width:45px; text-align:center;"> 分毎
+              <span style="color:#94a3b8; margin-left:6px;">(基準: 毎時</span>
+              <input type="number" class="sc-pattern-val" min="0" max="59" value="${patternMinute}" style="width:45px; text-align:center;">
+              <span style="color:#94a3b8;">分発)</span>
             </div>
           ` : ''}
         </div>
@@ -462,6 +471,7 @@ export class ScheduleUI {
               mode: newMode as 'pass' | 'stop' | 'pattern',
               waitMinutes: newMode === 'stop' ? 2 : undefined,
               patternMinute: newMode === 'pattern' ? min % 60 : undefined,
+              patternIntervalMinutes: newMode === 'pattern' ? 60 : undefined,
               isReverse: wasReverse
             });
           }
@@ -479,8 +489,9 @@ export class ScheduleUI {
           } else {
             zone.mode = newMode as 'pass' | 'stop' | 'pattern';
             if (newMode === 'stop' && !zone.waitMinutes) zone.waitMinutes = 2;
-            if (newMode === 'pattern' && zone.patternMinute === undefined) {
-              zone.patternMinute = zone.startMin % 60;
+            if (newMode === 'pattern') {
+              if (zone.patternMinute === undefined) zone.patternMinute = zone.startMin % 60;
+              if (zone.patternIntervalMinutes === undefined) zone.patternIntervalMinutes = 60;
             }
           }
         }
@@ -543,17 +554,28 @@ export class ScheduleUI {
       };
       card.querySelector('.sc-wait-val')?.addEventListener('change', updateWait);
 
-      // パターンダイヤ発車分変更（changeおよびinput両方で即座に反映）
-      const updatePatternMin = (e: Event) => {
-        const inputEl = e.target as HTMLInputElement;
-        const p = Math.max(0, Math.min(59, parseInt(inputEl.value) || 0));
+      // パターンダイヤ発車間隔（時間・分）および基準分の変更
+      const hoursInput = card.querySelector<HTMLInputElement>('.sc-pattern-hours');
+      const minsInput = card.querySelector<HTMLInputElement>('.sc-pattern-mins');
+      const baseInput = card.querySelector<HTMLInputElement>('.sc-pattern-val');
+
+      const updatePatternInterval = () => {
+        const h = Math.max(0, Math.min(23, parseInt(hoursInput?.value || '0') || 0));
+        const m = Math.max(0, Math.min(59, parseInt(minsInput?.value || '0') || 0));
+        const totalInterval = Math.max(1, h * 60 + m); // 最低1分以上
+        const base = Math.max(0, Math.min(59, parseInt(baseInput?.value || '0') || 0));
+
         const zone = schedule.timeZones.find(z => z.id === origId);
-        if (zone && zone.patternMinute !== p) {
-          zone.patternMinute = p;
+        if (zone) {
+          zone.patternIntervalMinutes = totalInterval;
+          zone.patternMinute = base;
           this.notifyChanged();
         }
       };
-      card.querySelector('.sc-pattern-val')?.addEventListener('change', updatePatternMin);
+
+      hoursInput?.addEventListener('change', updatePatternInterval);
+      minsInput?.addEventListener('change', updatePatternInterval);
+      baseInput?.addEventListener('change', updatePatternInterval);
 
       // コピーボタン
       card.querySelector('.sc-btn-copy')?.addEventListener('click', () => {
