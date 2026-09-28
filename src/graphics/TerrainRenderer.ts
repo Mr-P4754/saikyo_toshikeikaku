@@ -15,16 +15,16 @@ export class TerrainRenderer {
   private chunkGroups: Map<string, THREE.Group> = new Map();
   private tunnelChecker: ((x: number, z: number) => boolean) | null = null;
 
-  // 山岳マテリアル（上面は濃い緑、側面は岩肌/崖）
+  // 山岳マテリアル（緑豊かな山林・山肌）
   private mountainTopMat = new THREE.MeshStandardMaterial({
     color: 0x4d7c0f,
     roughness: 0.85,
     metalness: 0.05
   });
   private mountainSideMat = new THREE.MeshStandardMaterial({
-    color: 0x64748b,
-    roughness: 0.9,
-    metalness: 0.1
+    color: 0x4d7c0f,
+    roughness: 0.85,
+    metalness: 0.05
   });
   private mountainMaterials = [
     this.mountainSideMat, this.mountainSideMat,

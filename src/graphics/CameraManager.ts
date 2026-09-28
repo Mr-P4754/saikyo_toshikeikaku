@@ -237,7 +237,13 @@ export class CameraManager {
     // 2. 列車追尾のLerp補間
     if (this.isTracking && this.trackingTarget) {
       if (this.viewMode === 'quarter_view') {
-        this.target.lerp(this.trackingTarget.position, 0.08);
+        const dist = this.target.distanceTo(this.trackingTarget.position);
+        if (dist > 8) {
+          // 高速進行時や長距離移動時は画面外へ飛び出さないよう即時同期
+          this.target.copy(this.trackingTarget.position);
+        } else {
+          this.target.lerp(this.trackingTarget.position, 0.15);
+        }
       } else if (this.viewMode === 'cab_view') {
         // 前面展望視点（先頭車前面マスクよりわずかに前方・運転席アイポイントに配置し、自車の映り込み横線を根絶）
         const pos = this.trackingTarget.position;

@@ -325,6 +325,7 @@ export class UIManager {
   public onRecallFleetTrain: (fleetId: string) => void = () => {};
   public onTrackFleetTrain: (fleetId: string) => void = () => {};
   public onChangeFleetCarCount: (fleetId: string, delta: number) => void = () => {};
+  public onSellFleetTrain: (fleetId: string) => void = () => {};
   // ② 分岐器の左右分岐切替
   public onToggleSwitchSide: () => void = () => {};
   // ① 駅舎ホーム左右切替
@@ -933,6 +934,10 @@ export class UIManager {
   }
 
   public openVehicleModal() {
+    if (this.carsDisplay) {
+      this.carsDisplay.textContent = `${this.selectedCarCount}両編成`;
+    }
+    this.updateVehiclePriceDisplay();
     this.vehicleModal.classList.remove('hidden');
   }
 
@@ -1348,6 +1353,7 @@ export class UIManager {
             ` : `
               <button class="fleet-btn-deploy" data-id="${item.id}">線路に配置</button>
             `}
+            <button class="fleet-btn-sell" data-id="${item.id}" title="列車を売却して資金を回収します">売却 (¥${Math.floor(item.model.basePrice * item.cars * 0.5).toLocaleString()})</button>
           </div>
         `;
 
@@ -1378,6 +1384,12 @@ export class UIManager {
         trackBtn?.addEventListener('click', () => {
           this.fleetModal.classList.add('hidden');
           this.onTrackFleetTrain(item.id);
+        });
+
+        const sellBtn = card.querySelector('.fleet-btn-sell');
+        sellBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.onSellFleetTrain(item.id);
         });
 
         this.fleetList.appendChild(card);
@@ -1766,6 +1778,16 @@ export class UIManager {
     } else if (tile.type === 'commercial') {
       const commCap = tile.level === 1 ? '近隣型小型店舗' : tile.level === 2 ? '中規模オフィス・商業ビル' : tile.level === 3 ? '大型ビジネスオフィス' : '超高層ランドマーク複合施設';
       this.inspectExtraVal.textContent = `地価: ¥${(tile.landValue * 10000).toLocaleString()} / 施設規模: ${commCap}`;
+    } else if (tile.type === 'industrial') {
+      this.inspectExtraVal.textContent = `地価: ¥${(tile.landValue * 10000).toLocaleString()} / 工業生産・貨物需要拠点 (Lv.${tile.level})`;
+    } else if (tile.type === 'nature') {
+      this.inspectExtraVal.textContent = '自然の森林・緑地（景観向上・環境保全）';
+    } else if (tile.type === 'road') {
+      this.inspectExtraVal.textContent = '市民や物資が往来する舗装道路';
+    } else if (tile.type.includes('rail')) {
+      this.inspectExtraVal.textContent = '列車が走行可能な鉄道路線（開通中）';
+    } else if (tile.type === 'empty') {
+      this.inspectExtraVal.textContent = '未開発の空き地（開発・建設可能）';
     } else {
       this.inspectExtraVal.textContent = '良好';
     }

@@ -3,7 +3,7 @@ import { EngineRenderer, TimeOfDay } from './engine/Renderer';
 import { CameraManager } from './graphics/CameraManager';
 import { AudioManager } from './engine/AudioManager';
 import { ModelFactory } from './models/ModelFactory';
-import { WorldMap, CurveDirection, TileType, createDefaultStationSchedule } from './simulation/WorldMap';
+import { WorldMap, CurveDirection, TileType, TileData, createDefaultStationSchedule } from './simulation/WorldMap';
 import { TrainManager } from './simulation/TrainManager';
 import { CityGrowth } from './simulation/CityGrowth';
 import { Economy } from './simulation/Economy';
@@ -756,6 +756,44 @@ class GameApp {
       item.status = 'in_depot';
       item.activeTrainId = undefined;
       this.audioManager.playDemolishSound();
+      this.syncFleetStats();
+      this.uiManager.showFleetModal(this.fleetRegistry);
+    };
+
+    // 保有列車の売却（編成全体の売却・廃車返金）
+    this.uiManager.onSellFleetTrain = (fleetId: string) => {
+      const item = this.fleetRegistry.find(f => f.id === fleetId);
+      if (!item) return;
+
+      const refund = Math.floor(item.model.basePrice * item.cars * 0.5);
+      const isDeployed = item.status === 'deployed';
+      const confirmMsg = isDeployed
+        ? `【${item.name}】(${item.cars}両編成) は現在営業運行中です。\n運行を終了して線路から撤去し、売却しますか？\n\n売却受領額: ¥${refund.toLocaleString()}`
+        : `【${item.name}】(${item.cars}両編成) を売却しますか？\n\n売却受領額: ¥${refund.toLocaleString()}`;
+
+      if (!confirm(confirmMsg)) return;
+
+      // 営業運行中の場合は前面展望・追従カメラを安全に解除し、線路から列車を撤去
+      if (isDeployed && item.activeTrainId !== undefined) {
+        if (this.cabTargetTrainId === item.activeTrainId) {
+          this.exitCabView();
+        }
+        if (this.selectedTrainId === item.activeTrainId) {
+          this.selectedTrainId = null;
+          this.uiManager.closeInspector();
+        }
+        this.cameraManager.stopTracking();
+        this.trainManager.removeTrain(item.activeTrainId);
+      }
+
+      // 保有リストから除籍
+      this.fleetRegistry = this.fleetRegistry.filter(f => f.id !== fleetId);
+
+      // 売却返金
+      this.economy.refundFunds(refund);
+      this.audioManager.playDemolishSound();
+      this.uiManager.showToast('車両売却完了', `${item.name} を売却し、¥${refund.toLocaleString()} を受領しました。`, 'success');
+
       this.syncFleetStats();
       this.uiManager.showFleetModal(this.fleetRegistry);
     };
@@ -1623,7 +1661,7 @@ class GameApp {
       if (this.cameraManager.viewMode === 'cab_view') return;
 
       const tool = this.uiManager.getActiveTool();
-      if (ROTATABLE_TOOLS.includes(tool)) {
+      if (this.deployingFleetId || ROTATABLE_TOOLS.includes(tool)) {
         this.rotateCurrentPlacement();
       }
     });
@@ -1638,7 +1676,7 @@ class GameApp {
 
       if (e.key === 'r' || e.key === 'R') {
         const tool = this.uiManager.getActiveTool();
-        if (ROTATABLE_TOOLS.includes(tool)) {
+        if (this.deployingFleetId || ROTATABLE_TOOLS.includes(tool)) {
           this.rotateCurrentPlacement();
         }
       } else if (e.key === 'Escape') {
@@ -1648,9 +1686,12 @@ class GameApp {
         }
         this.isDraggingTrack = false;
         this.dragStartTile = null;
-        this.mobileDragStartTile = null;
+        const hadPending = this.pendingItems.length > 0 || !!this.pendingTrainDeploy;
         this.cancelPendingPlacements();
         this.updateRotationHint(this.uiManager.getActiveTool());
+        if (!hadPending) {
+          this.uiManager.closeInspector();
+        }
       } else if (e.key === 'Enter') {
         if (this.pendingTrainDeploy || this.pendingItems.length > 0) {
           this.confirmPendingPlacements();
@@ -2368,6 +2409,13 @@ class GameApp {
         curLayer = 1;
       }
     }
+    // 地下勾配線路は地上1Fから地下B1Fへの下りスロープ専用（地上1Fからのみ敷設可能）
+    if (tool === 'rail-slope-underground') {
+      if (curLayer !== 1) {
+        this.uiManager.showToast('敷設不可', '地下勾配線路は地上1Fから地下B1Fへの接続専用です。地上1Fでご利用ください。', 'warning');
+        return;
+      }
+    }
     let effectiveTool = this.resolveAutoToolForLayer(tool, curLayer);
     // 山岳地帯などで地表標高より低い階層の場合、直線線路は自動的にトンネルとして扱う
     if ((tool === 'rail-straight' || tool === 'rail-tunnel') && this.worldMap.isTunnelSection(x, z, curLayer)) {
@@ -2794,6 +2842,9 @@ class GameApp {
       if (layer >= 5) return false;
       if (layer < 0) layer = 1;
     }
+    if (tool === 'rail-slope-underground') {
+      if (layer !== 1) layer = 1;
+    }
     // 階層に応じたツールの自動切り替え解決
     tool = this.resolveAutoToolForLayer(tool, layer);
     // 山岳地帯などで地表標高より低い階層の場合、直線線路は自動的にトンネルとして扱う
@@ -3064,17 +3115,25 @@ class GameApp {
         return;
       }
       const curLayer = this.worldMap.activeLayer;
-      const tile = this.worldMap.getTile(x, z, curLayer);
-      if (tile) {
-        this.selectedTrainId = null;
-        this.selectedTilePos = { x, z, layer: curLayer };
-        this.cameraManager.stopTracking();
-        const hub = this.worldMap.resolveSwitchHub(x, z, curLayer);
-        const isStationOrYard = tile.type.startsWith('station') || tile.type === 'signal_yard' || tile.type.startsWith('cargo_station');
-        const runLength = isStationOrYard ? this.worldMap.getStationRunLength(x, z, curLayer) : undefined;
-        const stData = isStationOrYard ? this.worldMap.getStationAggregateData(x, z, curLayer) : undefined;
-        this.uiManager.showInspector(tile, hub, runLength, stData);
-      }
+      const existingTile = this.worldMap.getTile(x, z, curLayer);
+      const tile: TileData = existingTile || {
+        x,
+        z,
+        type: 'empty',
+        level: 1,
+        rotation: 0,
+        layer: curLayer,
+        landValue: 10,
+        stationPassengers: 0
+      };
+      this.selectedTrainId = null;
+      this.selectedTilePos = { x, z, layer: curLayer };
+      this.cameraManager.stopTracking();
+      const hub = this.worldMap.resolveSwitchHub(x, z, curLayer);
+      const isStationOrYard = tile.type.startsWith('station') || tile.type === 'signal_yard' || tile.type.startsWith('cargo_station');
+      const runLength = isStationOrYard ? this.worldMap.getStationRunLength(x, z, curLayer) : undefined;
+      const stData = isStationOrYard ? this.worldMap.getStationAggregateData(x, z, curLayer) : undefined;
+      this.uiManager.showInspector(tile, hub, runLength, stData);
       return;
     }
 
@@ -3088,6 +3147,12 @@ class GameApp {
           fleetItem.status = 'in_depot';
           fleetItem.activeTrainId = undefined;
         }
+        // 前面展望中に対象列車が撤去された場合は自由視点に安全復帰
+        if (this.cabTargetTrainId === train.id) {
+          this.exitCabView();
+        }
+        // カメラ追尾も解除
+        this.cameraManager.stopTracking();
         this.trainManager.removeTrain(train.id);
         this.audioManager.playDemolishSound();
         if (this.selectedTrainId === train.id) {
@@ -3140,7 +3205,12 @@ class GameApp {
             this.removeCargoYardVisual(t.x, t.z, t.layer);
           }
           this.audioManager.playDemolishSound();
+          if (this.selectedTilePos && tilesToClean.some(t => t.x === this.selectedTilePos!.x && t.z === this.selectedTilePos!.z && t.layer === this.selectedTilePos!.layer)) {
+            this.selectedTilePos = null;
+            this.uiManager.closeInspector();
+          }
           this.scheduleUI.refreshOrClose();
+          this.switchScheduleUI.refreshOrClose();
           this.miniMap.requestStaticUpdate();
           this.terrainRenderer.rebuildAll(this.gridManager, this.renderer.scene);
 
@@ -3673,6 +3743,7 @@ class GameApp {
     localStorage.removeItem('saikyo_time_data');
     this.cancelPendingPlacements();
     this.scheduleUI.close();
+    this.switchScheduleUI.close();
     this.uiManager.closeInspector();
     const reportModal = document.getElementById('report-modal');
     if (reportModal) reportModal.classList.add('hidden');
